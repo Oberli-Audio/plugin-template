@@ -308,6 +308,7 @@ class ValidatePluginSanitizer(unittest.TestCase):
 
     def run_pluginval(self, d, pluginval):
         env = {k: v for k, v in os.environ.items() if k != "PLUGINVAL"}
+        env["OBERLI_TOOLS"] = os.path.join(d, "no-tools.toml")   # this machine's tools.toml must not supply pluginval.asan here
         if pluginval is not None:
             env["PLUGINVAL"] = str(pluginval)
         here = os.path.dirname(os.path.abspath(__file__))
