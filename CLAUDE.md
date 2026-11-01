@@ -40,6 +40,10 @@ from the open lines (`python3 scripts/ship/shipcheck.py known-issues . --write`)
   components (`THIRD_PARTY_NOTICES.md` is generated).
 - `scripts/dsp-kit/` and `scripts/ship/` are byte copies of the kits in `~/bob-skills`
   (sound-design-bob and ship-bob): refresh them from there, never edit them here.
+- `Source/oberli/` is the family's shared plugin code (Loudness, Analysis, References,
+  RenderSafety, meters; README.md there), a byte copy from the template: refresh it with
+  `python3 tools/refresh_oberli.py`, never edit it here (CTest `oberli_copy` fails on an edit).
+  A change to it is made in `~/bob-skills` (`tools/template-src/Source/oberli`) and refreshed.
 - Machine paths (LLVM, Faust, pluginval, the hosts) are in `~/.config/oberli/tools.toml`
   (`python3 scripts/dsp-kit/toolchain.py check`), never in this repo.
 

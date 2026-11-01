@@ -2,13 +2,14 @@
 """init_plugin - turn a fresh clone of Oberli-Audio/plugin-template into a product.
 
 Run inside the clone (or with --repo-dir). It derives the identifiers from the product name,
-takes a free four-character code and a free accent from the family registry (or the ones you
-pass), registers the product there, fills every {{placeholder}} in the tree, swaps the
+takes a free four-character code from the family registry (or the one you pass) and the accent
+of the product's category (instruments: instrument; an effect names creative, mix or analysis),
+registers the product there, fills every {{placeholder}} in the tree, swaps the
 instrument table in for an instrument, regenerates Params.h, the manual and the notices, removes
 itself, checks the result (no placeholder left, shipcheck docs green) and commits "init from
 template".
 
-    python3 tools/init_plugin.py --product "Shimmer" --kind effect [--code Shim] [--accent saffron]
+    python3 tools/init_plugin.py --product "Shimmer" --kind effect --category creative [--code Shim]
                                  [--tier S|P|F] [--repo Oberli-Audio/shimmer] [--registry <plugins.toml>]
                                  [--registered] [--no-commit] [--repo-dir <clone>] [--date YYYY-MM-DD]
     python3 tools/init_plugin.py --check          # no placeholder left in the tree
@@ -88,7 +89,7 @@ def main(argv=None):
     ap.add_argument("--product")
     ap.add_argument("--kind", choices=("instrument", "effect"))
     ap.add_argument("--code")
-    ap.add_argument("--accent")
+    ap.add_argument("--category", help="the brand category (registry family.categories): instrument, or the effect's")
     ap.add_argument("--tier", default="S", choices=("S", "P", "F"))
     ap.add_argument("--repo", help="owner/repo on GitHub (default: the registry's owner and the slug)")
     ap.add_argument("--registry")
@@ -129,10 +130,10 @@ def main(argv=None):
         entry = dict(e, slug=d["slug"], bundle=d["bundle"], accent_hex=fam["accent_hex"][e["accent"]], theme=R.KINDS[e["kind"]])
     else:
         try:
-            entry = R.add(path, a.product, a.kind, a.code, a.accent, a.repo)
+            entry = R.add(path, a.product, a.kind, a.code, a.category, a.repo)
         except ValueError as ex:
             sys.exit("init_plugin: %s" % ex)
-        print("registered %s in %s: code %s, accent %s" % (entry["slug"], path, entry["code"], entry["accent"]))
+        print("registered %s in %s: code %s, category %s, accent %s" % (entry["slug"], path, entry["code"], entry["category"], entry["accent"]))
     if entry["kind"] != a.kind:
         sys.exit("init_plugin: the registry says %s is an %s, you said %s" % (entry["slug"], entry["kind"], a.kind))
 
@@ -165,7 +166,7 @@ def main(argv=None):
     run([sys.executable, str(root / "scripts/ship/shipcheck.py"), "known-issues", ".", "--write"], root)
 
     # the init material leaves the product
-    for p in (root / "tools/init/parameters.instrument.csv", root / "tools/init_plugin.py"):
+    for p in (root / "tools/init/parameters.instrument.csv", root / "tools/init/oberli-cmake.txt", root / "tools/init_plugin.py"):
         if p.exists():
             p.unlink()
     if (root / "tools/init").exists() and not any((root / "tools/init").iterdir()):

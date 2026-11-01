@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """registry - the Oberli Audio plugin registry (registry/plugins.toml in ship-bob) as a check.
 
-One list of products, codes, bundle ids and accents, so a four-character code or an accent is
-decided once per plugin and never reused. Where the file is looked for, in this order:
+One list of products, codes, bundle ids, categories and accents, so a four-character code is
+decided once per plugin and never reused, and every plugin wears its category's accent (the
+brand sheet: one accent per category, shared by every plugin in it). Where the file is looked for, in this order:
 $OBERLI_REGISTRY, the `registry.plugins` entry of ~/.config/oberli/tools.toml, the skill's own
 registry/plugins.toml next to this script's grandparent, ~/bob-skills/plugins/ship-bob/skills/
 ship-bob/registry/plugins.toml.
@@ -10,9 +11,11 @@ ship-bob/registry/plugins.toml.
     registry.py list                         every plugin with code, accent and kind
     registry.py check <repo>                 ship.toml and CMakeLists.txt agree with the entry for
                                              the repo's slug; the registry itself is consistent
-    registry.py propose --name "Shimmer"     a free code and a free accent for a new product
-    registry.py add --name "Shimmer" --kind effect [--code Shmr] [--accent saffron] [--repo o/r]
-                                             append the entry (refuses a taken slug, code or accent)
+    registry.py propose --name "Shimmer"     a free code for a new product, and the categories
+    registry.py add --name "Shimmer" --kind effect --category creative [--code Shmr] [--repo o/r]
+                                             append the entry with its category's accent (refuses a
+                                             taken slug or code, an unknown category, a category of
+                                             the other kind)
     registry.py selftest                     the checks fail on planted defects
 
 Exit codes: 0 ok, 1 a check failed, 2 bad arguments or no registry found.
@@ -147,12 +150,17 @@ def propose_code(name, reg):
     raise ValueError("no free code for %r" % name)
 
 
-def propose_accent(reg):
-    used = {p["accent"] for p in reg.get("plugin", {}).values()}
-    for a in reg["family"]["accents"]:
-        if a not in used:
-            return a
-    raise ValueError("every accent of the brand sheet is taken; the brand sheet must grow first")
+def category_kind(category):
+    """The instrument category holds the instruments; every other category holds effects."""
+    return "instrument" if category == "instrument" else "effect"
+
+
+def accent_for(reg, category):
+    """The accent a plugin of this category wears; ValueError for a category off the sheet."""
+    cats = reg["family"].get("categories", {})
+    if category not in cats:
+        raise ValueError("category %r is not on the brand sheet (%s)" % (category, ", ".join(cats)))
+    return cats[category]
 
 
 # ----------------------------------------------------------------------------- checks
@@ -160,7 +168,8 @@ def propose_accent(reg):
 def check_registry(reg):
     errs = []
     fam = reg.get("family", {})
-    for k in ("name", "manufacturer_code", "bundle_prefix", "github_owner", "accents", "accent_hex", "preset_extension"):
+    for k in ("name", "manufacturer_code", "bundle_prefix", "github_owner", "accents", "accent_hex", "categories",
+              "brand_accent", "preset_extension"):
         if k not in fam:
             errs.append("family.%s missing" % k)
     if errs:
@@ -170,14 +179,24 @@ def check_registry(reg):
     for a in fam["accents"]:
         if a not in fam["accent_hex"]:
             errs.append("family.accent_hex has no %s" % a)
-    seen = {"code": {fam["manufacturer_code"].lower(): "family"}, "accent": {}, "bundle_id": {}, "id": {}, "name": {}}
+    if fam["brand_accent"] not in fam["accents"]:
+        errs.append("family.brand_accent %r is not in family.accents" % fam["brand_accent"])
+    bone_only = fam.get("bone_only", [])
+    for cat, acc in fam["categories"].items():
+        if acc not in fam["accents"]:
+            errs.append("family.categories.%s: accent %r is not in family.accents" % (cat, acc))
+        if acc == fam["brand_accent"]:
+            errs.append("family.categories.%s: %s is the brand's own accent, never a plugin's" % (cat, acc))
+        if acc in bone_only and category_kind(cat) == "instrument":
+            errs.append("family.categories.%s: %s is for Bone (effects) only" % (cat, acc))
+    seen = {"code": {fam["manufacturer_code"].lower(): "family"}, "bundle_id": {}, "id": {}, "name": {}}
     for slug, p in reg.get("plugin", {}).items():
         if not SLUG_RE.match(slug):
             errs.append("plugin.%s: slug is not kebab-case" % slug)
-        for k in ("name", "id", "code", "kind", "accent", "bundle_id", "repo"):
+        for k in ("name", "id", "code", "kind", "category", "accent", "bundle_id", "repo"):
             if k not in p:
                 errs.append("plugin.%s: %s missing" % (slug, k))
-        if any(k not in p for k in ("name", "id", "code", "kind", "accent", "bundle_id")):
+        if any(k not in p for k in ("name", "id", "code", "kind", "category", "accent", "bundle_id")):
             continue
         d = derive(p["name"])
         if d["slug"] != slug:
@@ -190,9 +209,16 @@ def check_registry(reg):
             errs.append("plugin.%s: kind %r (instrument or effect)" % (slug, p["kind"]))
         if p["accent"] not in fam["accents"]:
             errs.append("plugin.%s: accent %r is not on the brand sheet" % (slug, p["accent"]))
+        if p["category"] not in fam["categories"]:
+            errs.append("plugin.%s: category %r is not on the brand sheet (%s)" % (slug, p["category"], ", ".join(fam["categories"])))
+        else:
+            if p["accent"] != fam["categories"][p["category"]]:
+                errs.append("plugin.%s: accent %r, its category %s wears %s" % (slug, p["accent"], p["category"], fam["categories"][p["category"]]))
+            if p["kind"] in KINDS and category_kind(p["category"]) != p["kind"]:
+                errs.append("plugin.%s: an %s in the %s category" % (slug, p["kind"], p["category"]))
         if p["bundle_id"] != fam["bundle_prefix"] + d["bundle"]:
             errs.append("plugin.%s: bundle_id %r, expected %s" % (slug, p["bundle_id"], fam["bundle_prefix"] + d["bundle"]))
-        for k in ("code", "accent", "bundle_id", "id", "name"):
+        for k in ("code", "bundle_id", "id", "name"):
             key = p[k].lower() if k == "code" else p[k]
             if key in seen[k]:
                 errs.append("plugin.%s: %s %r already used by %s" % (slug, k, p[k], seen[k][key]))
@@ -235,14 +261,16 @@ def check_repo(repo, reg):
 
 # ----------------------------------------------------------------------------- add
 
-def entry_text(slug, name, pid, code, kind, accent, bundle_id, repo):
-    return ("\n[plugin.%s]\nname = \"%s\"\nid = \"%s\"\ncode = \"%s\"\nkind = \"%s\"\naccent = \"%s\"\n"
+def entry_text(slug, name, pid, code, kind, category, accent, bundle_id, repo):
+    return ("\n[plugin.%s]\nname = \"%s\"\nid = \"%s\"\ncode = \"%s\"\nkind = \"%s\"\ncategory = \"%s\"\naccent = \"%s\"\n"
             "bundle_id = \"%s\"\nrepo = \"%s\"\nclass_id = \"\"\nfirst_release = \"\"\n"
-            % (slug, name, pid, code, kind, accent, bundle_id, repo))
+            % (slug, name, pid, code, kind, category, accent, bundle_id, repo))
 
 
-def add(path, name, kind, code=None, accent=None, repo=None):
-    """Append an entry; returns the entry dict. Raises ValueError on a taken slug, code or accent."""
+def add(path, name, kind, code=None, category=None, repo=None):
+    """Append an entry with its category's accent; returns the entry dict. Raises ValueError on a
+    taken slug or code, an unknown category or one of the other kind. An instrument's category
+    defaults to instrument; an effect names its own."""
     reg = load_toml(path)
     errs = check_registry(reg)
     if errs:
@@ -258,19 +286,21 @@ def add(path, name, kind, code=None, accent=None, repo=None):
         raise ValueError("code %r: one upper + three lower characters" % code)
     if code.lower() in {c.lower() for c in taken_codes(reg)}:
         raise ValueError("code %s is taken" % code)
-    accent = accent or propose_accent(reg)
-    if accent not in reg["family"]["accents"]:
-        raise ValueError("accent %r is not on the brand sheet (%s)" % (accent, ", ".join(reg["family"]["accents"])))
-    if accent in {p["accent"] for p in plugins.values()}:
-        raise ValueError("accent %s is taken" % accent)
+    category = category or ("instrument" if kind == "instrument" else None)
+    if category is None:
+        effect_cats = [c for c in reg["family"]["categories"] if category_kind(c) == "effect"]
+        raise ValueError("an effect names its category: --category %s" % "|".join(effect_cats))
+    accent = accent_for(reg, category)
+    if category_kind(category) != kind:
+        raise ValueError("category %s holds %ss, not %ss" % (category, category_kind(category), kind))
     fam = reg["family"]
     bundle_id = fam["bundle_prefix"] + d["bundle"]
     repo = repo or "%s/%s" % (fam["github_owner"], d["slug"])
     text = Path(path).read_text(encoding="utf-8")
     if not text.endswith("\n"):
         text += "\n"
-    Path(path).write_text(text + entry_text(d["slug"], name, d["id"], code, kind, accent, bundle_id, repo), encoding="utf-8")
-    return {"slug": d["slug"], "name": name, "id": d["id"], "code": code, "kind": kind, "accent": accent,
+    Path(path).write_text(text + entry_text(d["slug"], name, d["id"], code, kind, category, accent, bundle_id, repo), encoding="utf-8")
+    return {"slug": d["slug"], "name": name, "id": d["id"], "code": code, "kind": kind, "category": category, "accent": accent,
             "accent_hex": fam["accent_hex"][accent], "theme": KINDS[kind], "bundle_id": bundle_id, "repo": repo,
             "bundle": d["bundle"]}
 
@@ -283,18 +313,25 @@ manufacturer_code = "Obrl"
 bundle_prefix = "com.oberliaudio."
 github_owner = "Oberli-Audio"
 preset_extension = ".oberlipreset"
-accents = ["mango", "saffron"]
+accents = ["mango", "tangerine", "banana"]
+brand_accent = "mango"
 
 [family.accent_hex]
 mango = "#F09300"
-saffron = "#F6BF26"
+tangerine = "#F4511E"
+banana = "#F6BF26"
+
+[family.categories]
+instrument = "tangerine"
+creative = "banana"
 
 [plugin.fake-pad]
 name = "Fake Pad"
 id = "FakePad"
 code = "Fkpd"
 kind = "instrument"
-accent = "mango"
+category = "instrument"
+accent = "tangerine"
 bundle_id = "com.oberliaudio.fakepad"
 repo = "Oberli-Audio/fake-pad"
 class_id = ""
@@ -312,33 +349,45 @@ def selftest():
     expect("sample registry is consistent", check_registry(reg) == [])
     expect("derive", derive("Horizon Pad") == {"id": "HorizonPad", "slug": "horizon-pad", "bundle": "horizonpad"})
     expect("propose code avoids taken", propose_code("Fake Pad", reg) != "Fkpd" and CODE_RE.match(propose_code("Shimmer", reg)))
-    expect("propose accent is the free one", propose_accent(reg) == "saffron")
-    bad = _mini_toml(SAMPLE.replace('accent = "mango"', 'accent = "lime"'))
+    expect("an accent is its category's", accent_for(reg, "creative") == "banana")
+    bad = _mini_toml(SAMPLE.replace('accent = "tangerine"', 'accent = "lime"'))
     expect("accent off the sheet fails", any("not on the brand sheet" in e for e in check_registry(bad)))
-    dup = _mini_toml(SAMPLE + SAMPLE[SAMPLE.index("[plugin.fake-pad]"):].replace("fake-pad", "fake-pod").replace("Fake Pad", "Fake Pod").replace("FakePad", "FakePod").replace("fakepad", "fakepod"))
-    e = check_registry(dup)
-    expect("duplicate code and accent fail", any("code" in x for x in e) and any("accent" in x for x in e))
+    bad = _mini_toml(SAMPLE.replace('accent = "tangerine"', 'accent = "banana"'))
+    expect("an accent of another category fails", any("its category instrument wears tangerine" in e for e in check_registry(bad)))
+    bad = _mini_toml(SAMPLE.replace('category = "instrument"', 'category = "creative"').replace('accent = "tangerine"', 'accent = "banana"'))
+    expect("an instrument in an effect category fails", any("an instrument in the creative category" in e for e in check_registry(bad)))
+    bad = _mini_toml(SAMPLE.replace('creative = "banana"', 'creative = "mango"'))
+    expect("the brand accent on a category fails", any("the brand's own accent" in e for e in check_registry(bad)))
+    twin = SAMPLE[SAMPLE.index("[plugin.fake-pad]"):].replace("fake-pad", "fake-pod").replace("Fake Pad", "Fake Pod").replace("FakePad", "FakePod").replace("fakepad", "fakepod")
+    expect("two plugins of one category share its accent", check_registry(_mini_toml(SAMPLE + twin.replace("Fkpd", "Fkpo"))) == [])
+    e = check_registry(_mini_toml(SAMPLE + twin))
+    expect("a duplicate code fails", any("code" in x for x in e))
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "plugins.toml"
         p.write_text(SAMPLE, encoding="utf-8")
-        e = add(p, "Shimmer", "effect")
-        expect("add appends a consistent entry", e["accent"] == "saffron" and e["theme"] == "bone" and check_registry(load_toml(p)) == []
+        e = add(p, "Shimmer", "effect", category="creative")
+        expect("add appends a consistent entry", e["accent"] == "banana" and e["category"] == "creative" and e["theme"] == "bone"
+               and check_registry(load_toml(p)) == []
                and load_toml(p)["plugin"]["shimmer"]["bundle_id"] == "com.oberliaudio.shimmer")
         try:
-            add(p, "Shimmer", "effect")
+            add(p, "Shimmer", "effect", category="creative")
             fails.append("second add of the same slug should fail")
         except ValueError:
             pass
         try:
-            add(p, "Other Thing", "effect", code="Fkpd")
+            add(p, "Other Thing", "effect", code="Fkpd", category="creative")
             fails.append("taken code should fail")
         except ValueError:
             pass
-        try:
-            add(p, "Third Thing", "effect")
-            fails.append("no free accent should fail")
-        except ValueError:
-            pass
+        e = add(p, "Third Thing", "effect", category="creative")
+        expect("a second plugin of one category gets the same accent", e["accent"] == "banana" and check_registry(load_toml(p)) == [])
+        for args, why in ((("Fourth Thing", "effect"), "an effect without a category"), (("Fifth Thing", "effect", None, "loud"), "an unknown category"),
+                          (("Sixth Thing", "instrument", None, "creative"), "an instrument in an effect category")):
+            try:
+                add(p, *args)
+                fails.append("%s should fail" % why)
+            except ValueError:
+                pass
         # a repo against its entry
         repo = Path(d) / "repo"
         repo.mkdir()
@@ -354,7 +403,8 @@ def selftest():
         print("registry selftest FAILED:\n  " + "\n  ".join(fails), file=sys.stderr)
         return 1
     print("registry selftest OK: dotted-section parser, consistency, derived names, free code and accent, "
-          "duplicates and off-sheet accents fail, add refuses a taken slug, code or accent and an exhausted sheet, "
+          "duplicate codes, off-sheet accents and categories, an accent of another category fail, a category shares "
+          "its accent, add refuses a taken slug or code and a missing, unknown or wrong-kind category, "
           "a repo's ship.toml and CMakeLists.txt are checked against its entry")
     return 0
 
@@ -375,7 +425,7 @@ def main(argv=None):
     ad.add_argument("--name", required=True)
     ad.add_argument("--kind", required=True, choices=sorted(KINDS))
     ad.add_argument("--code")
-    ad.add_argument("--accent")
+    ad.add_argument("--category", help="instrument (the default for an instrument), or the effect's category")
     ad.add_argument("--repo")
     a = ap.parse_args(argv)
     if a.cmd == "selftest":
@@ -392,7 +442,7 @@ def main(argv=None):
         errs = check_registry(reg)
         print("registry: %s" % path)
         for slug, p in reg.get("plugin", {}).items():
-            print("  %-16s %-14s code %s  accent %-8s %s%s" % (slug, p.get("name"), p.get("code"), p.get("accent"), p.get("kind"),
+            print("  %-16s %-14s code %s  %-10s accent %-9s %s%s" % (slug, p.get("name"), p.get("code"), p.get("kind"), p.get("accent"), p.get("category"),
                                                               "  released " + p["first_release"] if p.get("first_release") else ""))
         for e in errs:
             print("ERROR: " + e)
@@ -407,15 +457,16 @@ def main(argv=None):
         print("registry check OK: %s matches %s" % (a.repo, path))
         return 0
     if a.cmd == "propose":
-        print("code %s, accent %s, slug %s" % (propose_code(a.name, reg), propose_accent(reg), derive(a.name)["slug"]))
+        cats = ", ".join("%s (%s, %s)" % (c, category_kind(c), acc) for c, acc in reg["family"].get("categories", {}).items())
+        print("code %s, slug %s; categories: %s" % (propose_code(a.name, reg), derive(a.name)["slug"], cats))
         return 0
     if a.cmd == "add":
         try:
-            e = add(path, a.name, a.kind, a.code, a.accent, a.repo)
+            e = add(path, a.name, a.kind, a.code, a.category, a.repo)
         except ValueError as ex:
             print("registry add: %s" % ex, file=sys.stderr)
             return 1
-        print("registry: added %s (%s, code %s, accent %s) to %s" % (e["slug"], e["kind"], e["code"], e["accent"], path))
+        print("registry: added %s (%s, %s, code %s, accent %s) to %s" % (e["slug"], e["kind"], e["category"], e["code"], e["accent"], path))
         return 0
     return 2
 

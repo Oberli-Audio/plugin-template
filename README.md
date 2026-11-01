@@ -1,7 +1,7 @@
 <!-- Oberli-Audio/plugin-template: the family's starting point, generated from ~/bob-skills by
 tools/build_template.py (never edit it here; edit the skills or tools/template-src). Start a plugin:
   gh repo create Oberli-Audio/<slug> --template Oberli-Audio/plugin-template --public --clone
-  cd <slug> && python3 tools/init_plugin.py --product "<Name>" --kind instrument|effect
+  cd <slug> && python3 tools/init_plugin.py --product "<Name>" --kind instrument|effect [--category creative|mix|analysis]
 init_plugin.py fills every {{placeholder}}, registers the code and accent, and removes this note. -->
 # {{Product}}
 

@@ -202,18 +202,24 @@ void {{ProductId}}AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer
     }
     // the skeleton's "wet" path is the input itself; the real effect renders into the buffer here
     const int channels = juce::jmin (2, buffer.getNumChannels());
-    for (int ch = 0; ch < channels; ++ch)
-        dryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
     mixSmoothed.setTargetValue (mixParam->load() / 100.0f);
-    for (int i = 0; i < numSamples; ++i)
+    // a host may send a block larger than it announced (D.5.1): the dry copy works in pieces
+    // of the prepared size, never resized here
+    for (int start = 0; start < numSamples; start += dryBuffer.getNumSamples())
     {
-        const float m = mixSmoothed.getNextValue();
-        const float dry = std::cos (m * juce::MathConstants<float>::halfPi);   // equal power
-        const float wet = std::sin (m * juce::MathConstants<float>::halfPi);
+        const int n = juce::jmin (dryBuffer.getNumSamples(), numSamples - start);
         for (int ch = 0; ch < channels; ++ch)
+            dryBuffer.copyFrom (ch, 0, buffer, ch, start, n);
+        for (int i = 0; i < n; ++i)
         {
-            auto* out = buffer.getWritePointer (ch);
-            out[i] = dryBuffer.getSample (ch, i) * dry + out[i] * wet;
+            const float m = mixSmoothed.getNextValue();
+            const float dry = std::cos (m * juce::MathConstants<float>::halfPi);   // equal power
+            const float wet = std::sin (m * juce::MathConstants<float>::halfPi);
+            for (int ch = 0; ch < channels; ++ch)
+            {
+                auto* out = buffer.getWritePointer (ch, start);
+                out[i] = dryBuffer.getSample (ch, i) * dry + out[i] * wet;
+            }
         }
     }
 #endif

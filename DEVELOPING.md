@@ -55,6 +55,16 @@ python3 scripts/dsp-kit/presetlint.py render presets.csv --tier {{Tier}} --harne
 python3 scripts/dsp-kit/perf.py run --harness $H --arch x86_64   # the CPU row of the release gate
 ```
 
+The shared code (`Source/oberli/`, README.md there) has its own tests in the fast label:
+`oberli_loudness` (EBU Tech 3341 / 3342), `oberli_shared` (Analysis, References, RenderSafety),
+`bounce_null` (a bounce renders what playback does: `tools/tests/check_bounce.py`) and
+`oberli_copy` (the folder is the template's copy). Refresh it from the template:
+
+```bash
+python3 tools/refresh_oberli.py           # a shallow clone of Oberli-Audio/plugin-template, then the copy
+python3 tools/refresh_oberli.py --check   # what oberli_copy runs
+```
+
 ## Validators (G6, the release gate)
 
 ```bash

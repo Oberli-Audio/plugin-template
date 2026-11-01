@@ -120,6 +120,13 @@ set(PRODUCT_SOURCES
     Source/Params.h
     Source/State.h)
 
+# The family's shared code: Source/oberli/ is a byte copy of ~/bob-skills
+# tools/template-src/Source/oberli (Loudness, Analysis, References, RenderSafety, the
+# LookAndFeel and the Strip frame), refreshed with tools/refresh_oberli.py, never edited here.
+file(GLOB OBERLI_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Source/oberli/*.cpp"
+                                          "${CMAKE_CURRENT_SOURCE_DIR}/Source/oberli/*.h")
+list(APPEND PRODUCT_SOURCES ${OBERLI_SOURCES})
+
 target_sources({{ProductId}} PRIVATE ${PRODUCT_SOURCES})
 target_include_directories({{ProductId}} PRIVATE Source "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions({{ProductId}}
@@ -134,6 +141,7 @@ target_compile_definitions({{ProductId}}
 target_link_libraries({{ProductId}}
     PRIVATE
         juce::juce_audio_utils
+        juce::juce_audio_formats
         juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
@@ -290,6 +298,11 @@ if (Python3_FOUND)
                      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
             set_tests_properties(release_bundles PROPERTIES LABELS fast)
         endif()
+        add_test(NAME bounce_null
+                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/check_bounce.py"
+                         --harness "$<TARGET_FILE:{{ProductId}}Harness>" --kind ${PRODUCT_KIND}
+                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(bounce_null PROPERTIES ENVIRONMENT "${HARNESS_ENV}" LABELS fast)
         add_test(NAME preset_bank
                  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/dsp-kit/presetlint.py" bank
                          "${CMAKE_CURRENT_SOURCE_DIR}/presets.csv" --tier S --track ${PRODUCT_KIND} --harness "$<TARGET_FILE:{{ProductId}}Harness>"
@@ -298,4 +311,37 @@ if (Python3_FOUND)
     else()
         message(STATUS "python3 without numpy and scipy: the test suite is not registered")
     endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# The shared code's own tests (Source/oberli/), label fast: Loudness against EBU Tech 3341
+# and 3342 at 44.1 to 192 kHz (plain C++), and OberliTests for what needs JUCE (Analysis,
+# References, RenderSafety). They need no Python, so they are registered in every build.
+# ---------------------------------------------------------------------------
+enable_testing()
+add_executable(OberliLoudnessTest tools/tests/test_loudness.cpp Source/oberli/Loudness.cpp)
+target_include_directories(OberliLoudnessTest PRIVATE Source)
+# The build presets name the plugin's targets only: CTest builds the two test programs itself first.
+add_test(NAME oberli_build_tests
+         COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --config $<CONFIG> --target OberliLoudnessTest OberliTests)
+set_tests_properties(oberli_build_tests PROPERTIES LABELS fast FIXTURES_SETUP oberli_tests)
+add_test(NAME oberli_loudness COMMAND OberliLoudnessTest)
+set_tests_properties(oberli_loudness PROPERTIES LABELS fast FIXTURES_REQUIRED oberli_tests)
+
+juce_add_console_app(OberliTests PRODUCT_NAME "OberliTests")
+target_sources(OberliTests PRIVATE tools/tests/test_oberli.cpp Source/oberli/Analysis.cpp Source/oberli/Folders.cpp
+    Source/oberli/Loudness.cpp Source/oberli/References.cpp)
+target_include_directories(OberliTests PRIVATE Source)
+target_compile_definitions(OberliTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_STANDALONE_APPLICATION=1
+    JucePlugin_Name="$<TARGET_PROPERTY:{{ProductId}},JUCE_PLUGIN_NAME>" JucePlugin_VersionString="${PROJECT_VERSION}")
+target_link_libraries(OberliTests PRIVATE juce::juce_audio_formats juce::juce_dsp juce::juce_gui_basics
+    juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+add_test(NAME oberli_shared COMMAND OberliTests)
+set_tests_properties(oberli_shared PROPERTIES LABELS fast FIXTURES_REQUIRED oberli_tests)
+if (Python3_FOUND)
+    # Source/oberli/ is the template's copy, byte for byte (its MANIFEST.sha256)
+    add_test(NAME oberli_copy
+             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/refresh_oberli.py" --check
+             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(oberli_copy PROPERTIES LABELS "fast;lint")
 endif()
