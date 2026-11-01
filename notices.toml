@@ -1,7 +1,7 @@
 # Third-party manifest: ship-bob notices.py generates THIRD_PARTY_NOTICES.md from this file and
 # checks it against CMakeLists.txt (ship-bob references/notices.md). Never edit the generated
-# file; a new dependency, font or Faust function is an entry here first. One font is bundled:
-# Rubik, the family's typeface, with the shared code (Source/oberli/assets/fonts).
+# file; a new dependency, font or Faust function is an entry here first. Two fonts are bundled
+# with the shared code (Source/oberli/assets/fonts): Rubik and Nunito.
 
 [check]
 cmake = ["CMakeLists.txt"]
@@ -37,3 +37,14 @@ url = "https://github.com/googlefonts/rubik"
 license_file = "LICENSES/OFL-1.1.txt"
 files = ["Rubik-Regular.ttf", "Rubik-Medium.ttf", "Rubik-SemiBold.ttf", "Rubik-Bold.ttf", "Rubik-ExtraBold.ttf"]
 note = "The editor's typeface (the Oberli Audio design system). The five static instances Google Fonts serves (Regular, Medium, SemiBold, Bold, ExtraBold), bundled unmodified in the plugin binary through BinaryData: no subsetting, no renaming."
+
+[[component]]
+name = "Nunito"
+kind = "font"
+version = "3.602"
+spdx = "OFL-1.1"
+copyright = "2014 The Nunito Project Authors"
+url = "https://github.com/googlefonts/nunito"
+license_file = "LICENSES/OFL-1.1.txt"
+files = ["Nunito-Regular.ttf", "Nunito-SemiBold.ttf"]
+note = "The editor's face for running text (the About text, tooltips, preset descriptions, messages). The two static instances Google Fonts serves (Regular, SemiBold), bundled unmodified in the plugin binary through BinaryData: no subsetting, no renaming."

@@ -88,9 +88,13 @@ namespace
 
             for (size_t i = 0; i < faces.size(); ++i)
                 faces[i] = juce::Typeface::createSystemTypefaceFor (files[i].first, (size_t) files[i].second);
+
+            textFaces[0] = juce::Typeface::createSystemTypefaceFor (OberliUiData::NunitoRegular_ttf, (size_t) OberliUiData::NunitoRegular_ttfSize);
+            textFaces[1] = juce::Typeface::createSystemTypefaceFor (OberliUiData::NunitoSemiBold_ttf, (size_t) OberliUiData::NunitoSemiBold_ttfSize);
         }
 
-        std::array<juce::Typeface::Ptr, 5> faces;
+        std::array<juce::Typeface::Ptr, 5> faces;       // Rubik 400 to 800
+        std::array<juce::Typeface::Ptr, 2> textFaces;   // Nunito 400, 600
 
         // Every style drawn, built once: a copy of a Font shares its shaped native font,
         // so paint() never builds one again. Message thread.
@@ -160,6 +164,18 @@ juce::Font type::font (Weight weight, float px, float trackingEm, bool tabular)
         return found->second;
 
     return typefaces->fonts.emplace (key, buildFont (typefaces->faces[(size_t) weight], px, trackingEm, tabular)).first->second;
+}
+
+juce::Font type::text (bool semibold, float px)
+{
+    jassert (px >= 13.0f);   // Nunito's x-height is small: never below 13 px at 100 % (brand sheet)
+    const juce::SharedResourcePointer<Typefaces> typefaces;
+    const auto key = std::make_tuple (semibold ? -2 : -1, juce::roundToInt (px * 100.0f), 0, false);
+
+    if (const auto found = typefaces->fonts.find (key); found != typefaces->fonts.end())
+        return found->second;
+
+    return typefaces->fonts.emplace (key, buildFont (typefaces->textFaces[semibold ? 1 : 0], px, 0.0f, false)).first->second;
 }
 
 void type::draw (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> lineBox,
@@ -357,14 +373,14 @@ std::unique_ptr<juce::TextLayout> LookAndFeel::layoutTooltip (const juce::String
     juce::AttributedString s;
     s.setJustification (juce::Justification::topLeft);
     s.setWordWrap (juce::AttributedString::byWord);
-    s.setLineSpacing (5.0f);
-    s.append (sentence, type::font (type::Weight::regular, 12.0f), colours.onReadout);
+    s.setLineSpacing (1.0f);   // 13/18: Nunito's own line height is about 17 px at 13 px
+    s.append (sentence, type::tooltip(), colours.onReadout);
 
     if (range.isNotEmpty())
-        s.append ("\n" + range, type::font (type::Weight::regular, 12.0f, 0.0f, true), colours.onReadout.withAlpha (0.75f));
+        s.append ("\n" + range, type::tooltip(), colours.onReadout.withAlpha (0.75f));
 
     auto layout = std::make_unique<juce::TextLayout>();
-    layout->createLayoutWithBalancedLineLengths (s, 240.0f - 2.0f * 8.0f);
+    layout->createLayoutWithBalancedLineLengths (s, 260.0f - 2.0f * 8.0f);
     return layout;
 }
 

@@ -81,15 +81,23 @@ namespace Tokens
     juce::DropShadow popShadow (const Palette& = front());
 }
 
-/** Rubik, bundled (Source/oberli/assets/fonts, SIL OFL 1.1, the five static
-    instances Google Fonts serves, unmodified) and registered once per process.
-    Every value switches on `tnum` so digits keep their width while a knob turns.
-    Sizes are CSS px (JUCE's point height), tracking in em, as the tokens give them. */
+/** Two families, two jobs (brand sheet, Type). Rubik for the logo, names, titles,
+    labels, controls and values: everything a player scans; every value switches on
+    `tnum` so digits keep their width while a knob turns (Nunito has no tabular
+    figures). Nunito for running text a player reads: the About text, tooltips,
+    preset descriptions, messages; never below 13 px. Both bundled from
+    Source/oberli/assets/fonts (SIL OFL 1.1, the static instances Google Fonts serves,
+    unmodified) and registered once per process. Sizes are CSS px (JUCE's point
+    height), tracking in em, as the tokens give them. */
 namespace type
 {
     enum class Weight { regular, medium, semibold, bold, extrabold };
 
+    /** Rubik. */
     juce::Font font (Weight, float px, float trackingEm = 0.0f, bool tabular = false);
+
+    /** Nunito, 400 or 600 (the two weights bundled); px 13 or more. */
+    juce::Font text (bool semibold, float px);
 
     inline juce::Font pluginName() { return font (Weight::bold, 15.0f); }
     inline juce::Font section()    { return font (Weight::bold, 11.0f, 0.12f); }
@@ -98,8 +106,9 @@ namespace type
     inline juce::Font control()    { return font (Weight::medium, 12.0f); }
     inline juce::Font controlStrong() { return font (Weight::semibold, 12.0f); }      // the selected segment
     inline juce::Font meta()       { return font (Weight::medium, 11.0f, 0.0f, true); }
-    inline juce::Font small()      { return font (Weight::regular, 13.0f); }
-    inline juce::Font body()       { return font (Weight::regular, 15.0f); }
+    inline juce::Font small()      { return text (false, 13.0f); }    // 13/19, Nunito
+    inline juce::Font body()       { return text (false, 15.0f); }    // 15/23, Nunito
+    inline juce::Font tooltip()    { return text (false, 13.0f); }    // 13/18, Nunito
     inline juce::Font title()      { return font (Weight::bold, 22.0f); }
     inline juce::Font eyebrow()    { return font (Weight::bold, 12.0f, 0.14f); }
     inline juce::Font display()    { return font (Weight::extrabold, 56.0f, -0.02f); }

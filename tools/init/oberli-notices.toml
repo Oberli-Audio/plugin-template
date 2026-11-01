@@ -1,5 +1,5 @@
-# The notices entry of the shared code (Source/oberli/assets/fonts); tools/refresh_oberli.py appends it
-# to a plugin's notices.toml that has no Rubik entry, then regenerates THIRD_PARTY_NOTICES.md.
+# The notices entries of the shared code (Source/oberli/assets/fonts); tools/refresh_oberli.py appends each
+# one a plugin's notices.toml lacks (by name), then regenerates THIRD_PARTY_NOTICES.md.
 
 [[component]]
 name = "Rubik"
@@ -11,3 +11,14 @@ url = "https://github.com/googlefonts/rubik"
 license_file = "LICENSES/OFL-1.1.txt"
 files = ["Rubik-Regular.ttf", "Rubik-Medium.ttf", "Rubik-SemiBold.ttf", "Rubik-Bold.ttf", "Rubik-ExtraBold.ttf"]
 note = "The editor's typeface (the Oberli Audio design system). The five static instances Google Fonts serves (Regular, Medium, SemiBold, Bold, ExtraBold), bundled unmodified in the plugin binary through BinaryData: no subsetting, no renaming."
+
+[[component]]
+name = "Nunito"
+kind = "font"
+version = "3.602"
+spdx = "OFL-1.1"
+copyright = "2014 The Nunito Project Authors"
+url = "https://github.com/googlefonts/nunito"
+license_file = "LICENSES/OFL-1.1.txt"
+files = ["Nunito-Regular.ttf", "Nunito-SemiBold.ttf"]
+note = "The editor's face for running text (the About text, tooltips, preset descriptions, messages). The two static instances Google Fonts serves (Regular, SemiBold), bundled unmodified in the plugin binary through BinaryData: no subsetting, no renaming."

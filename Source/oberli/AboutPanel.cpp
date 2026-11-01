@@ -75,7 +75,7 @@ AboutPanel::AboutPanel (const juce::String& name, const juce::String& versionTex
     licencesText.setReadOnly (true);
     licencesText.setScrollbarsShown (true);
     licencesText.setCaretVisible (false);
-    licencesText.setFont (type::font (type::Weight::regular, 12.0f));
+    licencesText.setFont (type::small());   // long text: Nunito
     licencesText.setColour (juce::TextEditor::backgroundColourId, back().surfaceRaised);
     licencesText.setColour (juce::TextEditor::textColourId, back().ink);
     licencesText.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);

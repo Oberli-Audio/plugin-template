@@ -21,7 +21,7 @@ What it does, in order:
   3. CMakeLists.txt: adds the Source/oberli glob, the binary data, the theme and accent (--accent,
      else the registry's entry), the links and the shared tests, if the file has none of them yet
      (it prints what it changed);
-  4. notices.toml: adds Rubik (the shared code bundles it) and regenerates THIRD_PARTY_NOTICES.md;
+  4. notices.toml: adds Rubik and Nunito (the shared code bundles them) and regenerates THIRD_PARTY_NOTICES.md;
   5. tools/harness/Main.cpp: adds --non-realtime (the bounce null test needs it), if missing.
 Then build and run `ctest --preset fast`, and commit: "oberli: refresh from plugin-template <sha>".
 """
@@ -163,23 +163,30 @@ def wire_cmake(repo, template, accent=None):
 
 
 def wire_notices(repo, template):
-    """Rubik ships with Source/oberli: its notices entry, then THIRD_PARTY_NOTICES.md regenerated."""
+    """The fonts ship with Source/oberli: each notices entry the repo lacks (by name), then
+    THIRD_PARTY_NOTICES.md regenerated."""
     notices = repo / "notices.toml"
-    entry = template / "tools" / "init" / "oberli-notices.toml"
-    if not notices.exists() or not entry.exists():
+    entries = template / "tools" / "init" / "oberli-notices.toml"
+    if not notices.exists() or not entries.exists():
         return
     text = notices.read_text(encoding="utf-8")
-    if 'name = "Rubik"' in text:
-        print("notices.toml: Rubik already there")
+    body = "".join(l for l in entries.read_text(encoding="utf-8").splitlines(True) if not l.startswith("#"))
+    added = []
+    for block in re.split(r"\n(?=\[\[component\]\])", body):
+        m = re.search(r'^name = "([^"]+)"', block, re.M)
+        if m and 'name = "%s"' % m.group(1) not in text:
+            text = text.rstrip("\n") + "\n\n" + block.strip("\n") + "\n"
+            added.append(m.group(1))
+    if not added:
+        print("notices.toml: the shared code's fonts are there")
         return
-    block = "".join(l for l in entry.read_text(encoding="utf-8").splitlines(True) if not l.startswith("#"))
-    notices.write_text(text.rstrip("\n") + "\n" + block, encoding="utf-8")
+    notices.write_text(text, encoding="utf-8")
     tool = repo / "scripts" / "ship" / "notices.py"
     if tool.exists():
         r = subprocess.run([sys.executable, str(tool), "generate", str(repo)], capture_output=True, text=True)
-        print("notices.toml: added Rubik; THIRD_PARTY_NOTICES.md %s" % ("regenerated" if r.returncode == 0 else "NOT regenerated: " + r.stderr.strip()[-200:]))
+        print("notices.toml: added %s; THIRD_PARTY_NOTICES.md %s" % (", ".join(added), "regenerated" if r.returncode == 0 else "NOT regenerated: " + r.stderr.strip()[-200:]))
     else:
-        print("notices.toml: added Rubik; regenerate THIRD_PARTY_NOTICES.md")
+        print("notices.toml: added %s; regenerate THIRD_PARTY_NOTICES.md" % ", ".join(added))
 
 
 def wire_harness(repo):
