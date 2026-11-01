@@ -149,12 +149,38 @@ if (PRODUCT_RELEASE_SYMBOLS)
         target_link_options({{ProductId}} PUBLIC $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
     elseif (APPLE)
         target_compile_options({{ProductId}} PUBLIC $<$<CONFIG:Release>:-g>)
+        set(PRODUCT_LTO_ARCHS ${CMAKE_OSX_ARCHITECTURES})
+        if (NOT PRODUCT_LTO_ARCHS)
+            set(PRODUCT_LTO_ARCHS ${CMAKE_HOST_SYSTEM_PROCESSOR})
+        endif()
         foreach(format {{Formats}})
             if (TARGET {{ProductId}}_${format})
+                # with LTO the linker deletes its object (/tmp/lto.o) before dsymutil reads it: keep it,
+                # one per architecture (a shared path keeps only the last slice's: an empty arm64 dSYM)
+                foreach(arch ${PRODUCT_LTO_ARCHS})
+                    target_link_options({{ProductId}}_${format} PRIVATE
+                        "$<$<CONFIG:Release>:SHELL:-Xarch_${arch} -Wl,-object_path_lto,${CMAKE_CURRENT_BINARY_DIR}/lto-${format}-${arch}.o>")
+                endforeach()
+                # what CMake copies into the bundle (MACOSX_PACKAGE_LOCATION, the Standalone's nib) can
+                # land after POST_BUILD in a fresh build and break the seal: copy it here first
+                set(bundle_copies "")
+                get_target_property(bundle_sources {{ProductId}}_${format} SOURCES)
+                foreach(src IN LISTS bundle_sources)
+                    get_source_file_property(loc "${src}" MACOSX_PACKAGE_LOCATION)
+                    if (loc)
+                        list(APPEND bundle_copies
+                            COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:{{ProductId}}_${format}>/${loc}"
+                            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${src}" "$<TARGET_BUNDLE_CONTENT_DIR:{{ProductId}}_${format}>/${loc}/")
+                    endif()
+                endforeach()
+                # strip runs after JUCE's ad-hoc signature and breaks it; macOS will not load a
+                # broken signature (on Apple Silicon and under Rosetta), so sign ad hoc again last
                 add_custom_command(TARGET {{ProductId}}_${format} POST_BUILD
                     COMMAND dsymutil "$<TARGET_FILE:{{ProductId}}_${format}>" -o "$<TARGET_BUNDLE_DIR:{{ProductId}}_${format}>.dSYM"
                     COMMAND strip -x "$<TARGET_FILE:{{ProductId}}_${format}>"
-                    COMMENT "dSYM and strip: ${format}"
+                    ${bundle_copies}
+                    COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:{{ProductId}}_${format}>"
+                    COMMENT "dSYM, strip and ad-hoc signature: ${format}"
                     VERBATIM)
             endif()
         endforeach()
@@ -195,6 +221,11 @@ target_compile_definitions({{ProductId}}Harness PRIVATE
 # The harness compiles the plugin sources itself with its own copy of the modules (simple and
 # portable; Horizon Pad links the SharedCode library instead, which saves a compile).
 target_sources({{ProductId}}Harness PRIVATE ${PRODUCT_SOURCES})
+# JUCE 8 puts JucePlugin_* on the plugin target only (no JucePluginDefines.h); the harness
+# compiles the plugin sources itself, so it gets the two the shared sources use.
+target_compile_definitions({{ProductId}}Harness PRIVATE
+    JucePlugin_Name="$<TARGET_PROPERTY:{{ProductId}},JUCE_PLUGIN_NAME>"
+    JucePlugin_VersionString="${PROJECT_VERSION}")
 target_link_libraries({{ProductId}}Harness PRIVATE
     juce::juce_audio_utils juce::juce_dsp juce::juce_audio_formats
     juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
@@ -250,6 +281,15 @@ if (Python3_FOUND)
                          --harness "$<TARGET_FILE:{{ProductId}}Harness>" --kind ${PRODUCT_KIND}
                  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
         set_tests_properties(parameter_table PROPERTIES LABELS "fast;lint")
+        add_test(NAME design_sources_in_git
+                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/check_sources.py" "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(design_sources_in_git PROPERTIES LABELS "fast;lint")
+        if (APPLE AND PRODUCT_RELEASE_SYMBOLS)
+            add_test(NAME release_bundles
+                     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/check_bundles.py" "${CMAKE_CURRENT_BINARY_DIR}"
+                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+            set_tests_properties(release_bundles PROPERTIES LABELS fast)
+        endif()
         add_test(NAME preset_bank
                  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/dsp-kit/presetlint.py" bank
                          "${CMAKE_CURRENT_SOURCE_DIR}/presets.csv" --tier S --track ${PRODUCT_KIND} --harness "$<TARGET_FILE:{{ProductId}}Harness>"

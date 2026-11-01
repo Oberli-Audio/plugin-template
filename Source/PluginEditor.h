@@ -21,7 +21,7 @@ public:
     void resized() override;
 
 private:
-    {{ProductId}}AudioProcessor& processor;
+    {{ProductId}}AudioProcessor& audioProcessor;   // not `processor`: AudioProcessorEditor has one (Apple clang -Wshadow)
     juce::TooltipWindow tooltips { this, 500 };
     struct Control
     {

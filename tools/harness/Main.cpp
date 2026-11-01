@@ -37,7 +37,7 @@
 // Real-time safety (rule 1, D.1.6). With PRODUCT_RTSAN (the rtsan preset, LLVM 20+) every
 // processBlock runs inside a [[clang::nonblocking]] function: any allocation, lock or system call
 // aborts with a stack trace. PRODUCT_RTSAN_SELFTEST=1 allocates once inside and must abort (the
-// check is live). In every other macOS build the malloc trap below is the Tier P check.
+// check is live). In every other macOS or Linux build the malloc trap below is the Tier P check.
 #if defined(__has_feature)
  #if __has_feature(realtime_sanitizer)
   #define PRODUCT_NONBLOCKING [[clang::nonblocking]]
@@ -56,12 +56,38 @@ static void rtsanSelfTestAllocation() { rtsanSelfTestSink = std::malloc (64); st
 #endif
 
 // The malloc trap: this executable defines malloc, calloc, realloc, posix_memalign and operator
-// new/delete, forwarding to the default zone; an allocation by the thread inside processBlock
-// aborts the run. The plugin and JUCE are linked statically, so their calls bind here.
-// PRODUCT_MALLOC_TRAP=0 switches it off, PRODUCT_MALLOC_TRAP_SELFTEST=1 allocates once inside the
-// armed region and must abort. It misses locks, system calls, page faults and unbounded loops.
-#if JUCE_MAC && ! PRODUCT_HAS_RTSAN
- #include <malloc/malloc.h>
+// new/delete, forwarding to the default zone (on Linux to glibc's own entry points); an allocation
+// by the thread inside processBlock aborts the run. The plugin and JUCE are linked statically, so
+// their calls bind here. PRODUCT_MALLOC_TRAP=0 switches it off, PRODUCT_MALLOC_TRAP_SELFTEST=1
+// allocates once inside the armed region and must abort. It misses locks, system calls, page faults
+// and unbounded loops. Off under ASan, whose allocator must own malloc.
+#if defined(__SANITIZE_ADDRESS__)
+ #define PRODUCT_HAS_ASAN 1
+#elif defined(__has_feature)
+ #if __has_feature(address_sanitizer)
+  #define PRODUCT_HAS_ASAN 1
+ #endif
+#endif
+#ifndef PRODUCT_HAS_ASAN
+ #define PRODUCT_HAS_ASAN 0
+#endif
+#define PRODUCT_MALLOC_TRAP_BUILD ((JUCE_MAC || JUCE_LINUX) && ! PRODUCT_HAS_RTSAN && ! PRODUCT_HAS_ASAN)
+
+#if PRODUCT_MALLOC_TRAP_BUILD
+ #if JUCE_MAC
+  #include <malloc/malloc.h>
+ #else
+  #include <malloc.h>
+extern "C" void* __libc_malloc (size_t);
+extern "C" void* __libc_calloc (size_t, size_t);
+extern "C" void* __libc_realloc (void*, size_t);
+extern "C" void* __libc_memalign (size_t, size_t);
+static inline void* malloc_zone_malloc (void*, size_t n) { return __libc_malloc (n); }
+static inline void* malloc_zone_calloc (void*, size_t c, size_t n) { return __libc_calloc (c, n); }
+static inline void* malloc_zone_realloc (void*, void* p, size_t n) { return __libc_realloc (p, n); }
+static inline void* malloc_zone_memalign (void*, size_t a, size_t n) { return __libc_memalign (a, n); }
+static inline void* malloc_default_zone() { return nullptr; }
+ #endif
  #include <pthread.h>
  #include <unistd.h>
  #include <cerrno>
@@ -102,6 +128,10 @@ extern "C"
         *out = malloc_zone_memalign (malloc_default_zone(), alignment, n);
         return *out != nullptr ? 0 : ENOMEM;
     }
+   #if JUCE_LINUX
+    void* memalign (size_t a, size_t n)       { mallocTrap::check ("memalign");      return malloc_zone_memalign (malloc_default_zone(), a, n); }
+    void* aligned_alloc (size_t a, size_t n)  { mallocTrap::check ("aligned_alloc"); return malloc_zone_memalign (malloc_default_zone(), a, n); }
+   #endif
 }
 void* operator new (size_t n)                  { mallocTrap::check ("operator new");   if (auto* p = malloc_zone_malloc (malloc_default_zone(), n ? n : 1)) return p; throw std::bad_alloc(); }
 void* operator new[] (size_t n)                { mallocTrap::check ("operator new[]"); if (auto* p = malloc_zone_malloc (malloc_default_zone(), n ? n : 1)) return p; throw std::bad_alloc(); }
@@ -119,7 +149,7 @@ static void processBlockRealtime (juce::AudioProcessor& processor, juce::AudioBu
     if (rtsanSelfTest)
         rtsanSelfTestAllocation();
    #endif
-   #if JUCE_MAC && ! PRODUCT_HAS_RTSAN
+   #if PRODUCT_MALLOC_TRAP_BUILD
     static const bool trapOn = mallocTrap::enabled();
     if (trapOn)
     {
@@ -288,7 +318,7 @@ struct Signal
         {
             const juce::int64 at = startSample + i;
             float v = 0.0f;
-            if (kind == "impulse")       v = at == 0 ? 1.0f : 0.0f;
+            if (kind == "impulse")       v = at == 0 ? 0.5f : 0.0f;   // -6 dBFS, as the contract: a unity effect stays below full scale
             else if (kind == "sine")     { v = gain * (float) std::sin (phase); phase += juce::MathConstants<double>::twoPi * hz / rate; if (phase > juce::MathConstants<double>::twoPi) phase -= juce::MathConstants<double>::twoPi; }
             else if (kind == "logsweep")
             {
@@ -479,7 +509,9 @@ static int run (int argc, char* argv[])
                 auto o = obj();
                 set (o, "id", ranged->paramID);
                 set (o, "default", (double) ranged->getDefaultValue());
-                set (o, "steps", ranged->isDiscrete() ? ranged->getNumSteps() : 0);
+                // JUCE's AudioParameterInt is not isDiscrete() but has its steps (paramgen check compares them)
+                const bool stepped = ranged->isDiscrete() || ranged->getNumSteps() != juce::AudioProcessor::getDefaultNumParameterSteps();
+                set (o, "steps", stepped ? ranged->getNumSteps() : 0);
                 set (o, "automatable", ranged->isAutomatable());
                 list.append (o);
             }
@@ -493,9 +525,12 @@ static int run (int argc, char* argv[])
     const juce::String blockArg = args.get ("block", "512");
     const bool randomBlocks = blockArg.startsWith ("random:");
     int block = randomBlocks ? 0 : (int) numberOr (blockArg, "--block");
-    int maxBlock = args.has ("max-block") ? (int) numberOr (args.get ("max-block"), "--max-block") : (randomBlocks ? 512 : block);
+    // --block=0 (the DoD's block list, D.5.1): a zero-length processBlock before every block of
+    // --max-block (default 512) samples; a zero-length block must be legal and change nothing
+    const bool zeroBlocks = ! randomBlocks && block == 0;
+    int maxBlock = args.has ("max-block") ? (int) numberOr (args.get ("max-block"), "--max-block") : ((randomBlocks || zeroBlocks) ? 512 : block);
     if (randomBlocks && ! args.has ("max-block")) maxBlock = 512;
-    if (rate <= 0 || (! randomBlocks && block <= 0) || maxBlock <= 0) refuse ("--sample-rate, --block and --max-block must be positive (or --block=random:<seed>)");
+    if (rate <= 0 || block < 0 || maxBlock <= 0) refuse ("--sample-rate and --max-block must be positive, --block 0 or more (or --block=random:<seed>)");
     const double seconds = numberOr (args.get ("seconds", "2"), "--seconds");
     if (seconds <= 0) refuse ("--seconds must be positive");
     std::mt19937 blockRng ((unsigned) (randomBlocks ? numberOr (blockArg.fromFirstOccurrenceOf (":", false, false), "--block=random") : 0));
@@ -639,7 +674,9 @@ static int run (int argc, char* argv[])
     int midiFileIndex = 0;
     juce::int64 pos = 0;
     juce::int64 total = (juce::int64) std::llround (seconds * rate);
-    juce::AudioBuffer<float> work (2, maxBlock);
+    // a block larger than announced must fit the work buffer (it overflowed the heap when it was
+    // only --max-block long)
+    juce::AudioBuffer<float> work (2, juce::jmax (maxBlock, block));
     juce::MidiBuffer midi;
 
     while (pos < total)
@@ -651,13 +688,19 @@ static int run (int argc, char* argv[])
             const double remaining = seconds - now;
             rate = r.rate; maxBlock = r.block; if (! randomBlocks) block = r.block;
             total = pos + (juce::int64) std::llround (remaining * rate);
-            work.setSize (2, maxBlock, false, false, true);
+            work.setSize (2, juce::jmax (maxBlock, block), false, false, true);
             processor->prepareToPlay (rate, maxBlock);   // no releaseResources: pluginval's non-releasing case
         }
         while (nextPreset < presetAts.size() && presetAts[nextPreset].t <= now)
             loadPreset (apvts, presetAts[nextPreset++].slug);
 
-        int n = randomBlocks ? (int) (blockRng() % (unsigned) (maxBlock + 1)) : block;
+        if (zeroBlocks)
+        {
+            juce::AudioBuffer<float> none (work.getArrayOfWritePointers(), 2, 0);
+            juce::MidiBuffer noMidi;
+            processBlockRealtime (*processor, none, noMidi);
+        }
+        int n = randomBlocks ? (int) (blockRng() % (unsigned) (maxBlock + 1)) : (zeroBlocks ? maxBlock : block);
         n = (int) juce::jmin ((juce::int64) n, total - pos);
         for (const auto& r : ramps)
             paramById (r.id)->setValueNotifyingHost ((float) juce::jlimit (0.0, 1.0, rampValue (r, now)));
@@ -760,13 +803,14 @@ static int run (int argc, char* argv[])
     const Loudness loud = measureLoudness (out, rate);
     const double tp = (nans + infs) == 0 ? truePeak (out) : 0.0;
     const double sourceEnd = isInstrument ? (gate >= 0.0 ? gate : seconds) : (signal.kind == "file" ? (double) signal.file.getNumSamples() / rate : (signal.kind == "impulse" ? 0.0 : seconds));
-    const double tail = lastAudible >= 0 ? juce::jmax (0.0, (double) lastAudible / rate - sourceEnd) : 0.0;
+    const double tail = lastAudible >= 0 ? juce::jmax (0.0, (double) (lastAudible + 1) / rate - sourceEnd) : 0.0;   // up to the end of the last audible sample
 
     juce::var root = obj();
     set (root, "contract", 3);
     {
         auto applied = obj();
-        set (applied, "seed", seed); set (applied, "sample_rate", rate); set (applied, "block", randomBlocks ? juce::var (blockArg) : juce::var (block));
+        set (applied, "seed", seed); set (applied, "sample_rate", rate == std::floor (rate) ? juce::var ((int) rate) : juce::var (rate));   // contract: an integer (dspkit compares the text)
+        set (applied, "block", randomBlocks ? juce::var (blockArg) : juce::var (block));
         set (applied, "max_block", maxBlock); set (applied, "seconds", seconds);
         set (applied, "preset", presetName.isEmpty() ? juce::var() : juce::var (presetName)); set (applied, "solo", solo.isEmpty() ? juce::var() : juce::var (solo));
         auto params = obj();

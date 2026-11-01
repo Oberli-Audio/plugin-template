@@ -8,6 +8,8 @@ _deps/
 *.obj
 *.a
 *.lib
+# ... but Faust libraries are sources: a prototype that loads one must find it in a fresh clone
+!/sound design/**/*.lib
 *.so
 *.dylib
 *.dll

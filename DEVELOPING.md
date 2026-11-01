@@ -21,9 +21,12 @@ cmake --preset asan && cmake --build --preset asan         # ASan + UBSan (relea
 eval "$(python3 scripts/dsp-kit/toolchain.py env)" && cmake --preset rtsan && cmake --build --preset rtsan   # RealtimeSanitizer
 ```
 
-Bundles: `build/{{ProductId}}_artefacts/Release/VST3/{{Product}}.vst3`, Standalone beside it.
-Install for a local session: copy the `.vst3` to `~/Library/Audio/Plug-Ins/VST3/` (per-user,
-no password), then rescan in Ableton Live. Windows: `C:\Program Files\Common Files\VST3\`.
+Bundles: `build/{{ProductId}}_artefacts/Release/VST3/{{Product}}.vst3`, Standalone beside it, each
+with its dSYM. Install for a local session on the Mac: `tools/install_plugin.sh` (builds the release
+preset, verifies the signature, copies the `.vst3` to `~/Library/Audio/Plug-Ins/VST3/`, per-user, no
+password; `--no-build` installs what `build/` holds), then rescan in Ableton Live. Windows: copy the
+`.vst3` to `C:\Program Files\Common Files\VST3\`. `ctest` checks on macOS that every release bundle's
+signature verifies and its dSYM symbolicates every slice (`release_bundles`).
 
 ## The harness
 
