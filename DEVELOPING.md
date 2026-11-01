@@ -60,6 +60,14 @@ The shared code (`Source/oberli/`, README.md there) has its own tests in the fas
 `bounce_null` (a bounce renders what playback does: `tools/tests/check_bounce.py`) and
 `oberli_copy` (the folder is the template's copy). Refresh it from the template:
 
+The editor rendered offscreen (plugin-ui-bob's evidence at 100/150/200 %; under `xvfb-run` on Linux):
+
+```bash
+cmake --build build --target {{ProductId}}GuiSnapshot
+S=build/{{ProductId}}GuiSnapshot_artefacts/Release/{{ProductId}}GuiSnapshot
+$S --scale=2 --out=docs/ui/panel@2x.png        # --state=menu|scale-menu|drawer|save|about|licences, --drag=<id>
+```
+
 ```bash
 python3 tools/refresh_oberli.py           # a shallow clone of Oberli-Audio/plugin-template, then the copy
 python3 tools/refresh_oberli.py --check   # what oberli_copy runs

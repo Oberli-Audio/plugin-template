@@ -402,7 +402,7 @@ def selftest():
     if fails:
         print("registry selftest FAILED:\n  " + "\n  ".join(fails), file=sys.stderr)
         return 1
-    print("registry selftest OK: dotted-section parser, consistency, derived names, free code and accent, "
+    print("registry selftest OK: dotted-section parser, consistency, derived names, a free code, "
           "duplicate codes, off-sheet accents and categories, an accent of another category fail, a category shares "
           "its accent, add refuses a taken slug or code and a missing, unknown or wrong-kind category, "
           "a repo's ship.toml and CMakeLists.txt are checked against its entry")

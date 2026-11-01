@@ -18,9 +18,11 @@ A repo made before Source/oberli/ existed has no copy of this tool yet; fetch th
 What it does, in order:
   1. replaces Source/oberli/ with the template's (files the template no longer has are removed);
   2. copies tools/tests/test_loudness.cpp, test_oberli.cpp, check_bounce.py and this tool;
-  3. CMakeLists.txt: adds the Source/oberli glob, the binary data, the theme and accent, the
-     links and the shared tests, if the file has none of them yet (it prints what it changed);
-  4. tools/harness/Main.cpp: adds --non-realtime (the bounce null test needs it), if missing.
+  3. CMakeLists.txt: adds the Source/oberli glob, the binary data, the theme and accent (--accent,
+     else the registry's entry), the links and the shared tests, if the file has none of them yet
+     (it prints what it changed);
+  4. notices.toml: adds Rubik (the shared code bundles it) and regenerates THIRD_PARTY_NOTICES.md;
+  5. tools/harness/Main.cpp: adds --non-realtime (the bounce null test needs it), if missing.
 Then build and run `ctest --preset fast`, and commit: "oberli: refresh from plugin-template <sha>".
 """
 import argparse
@@ -34,6 +36,7 @@ from pathlib import Path
 
 TEMPLATE_URL = "https://github.com/Oberli-Audio/plugin-template"
 COMPANIONS = ["tools/tests/test_loudness.cpp", "tools/tests/test_oberli.cpp", "tools/tests/check_bounce.py",
+              "tools/gui_snapshot/Main.cpp",
               "tools/refresh_oberli.py"]
 MANIFEST = "MANIFEST.sha256"
 
@@ -73,7 +76,32 @@ def snippets(template):
     return dict(re.findall(r"# >>> (\S+)\n(.*?)# <<< \1\n", path.read_text(encoding="utf-8"), re.S))
 
 
-def wire_cmake(repo, template):
+def accent_hex(repo, template, given):
+    """The product's accent as RRGGBB: --accent, else the one CMakeLists.txt already sets, else the
+    registry's entry for ship.toml's slug (registry.py finds the registry as everywhere)."""
+    if given:
+        return given.lstrip("#").upper()
+    m = re.search(r"OBERLI_ACCENT=0xFF([0-9A-Fa-f]{6})", (repo / "CMakeLists.txt").read_text(encoding="utf-8"))
+    if m:
+        return m.group(1).upper()
+    try:
+        sys.dont_write_bytecode = True   # leave no __pycache__ in the template clone
+        sys.path.insert(0, str(template / "scripts" / "ship"))
+        import registry as R
+        path = R.find_registry(None)
+        slug = R.load_toml(repo / "ship.toml").get("product", {}).get("slug")
+        reg = R.load_toml(path) if path else {}
+        entry = reg.get("plugin", {}).get(slug)
+        if entry:
+            return reg["family"]["accent_hex"][entry["accent"]].lstrip("#").upper()
+    except Exception:  # noqa: BLE001 - any failure means: ask for --accent
+        pass
+    sys.exit("refresh_oberli: no accent known for this plugin: pass --accent '#RRGGBB', its category's "
+             "(plugin-ui-bob brand sheet: instruments tangerine #F4511E, creative banana #F6BF26, "
+             "mix sage #33B679, analysis peacock #039BE5)")
+
+
+def wire_cmake(repo, template, accent=None):
     """Adds each snippet the repo's CMakeLists.txt lacks, at its anchor:
          sources        before target_sources(<Id> PRIVATE ${PRODUCT_SOURCES})   unless 'Source/oberli' is there
          binary         after that line                                          unless 'juce_add_binary_data(OberliUiData' is there
@@ -90,6 +118,9 @@ def wire_cmake(repo, template):
     pid = m.group(1)
     placeholder = "{{" + "ProductId" + "}}"   # spelled apart, so init_plugin.py leaves this line alone
     snip = {k: v.replace(placeholder, pid) for k, v in snippets(template).items()}
+    if any("{{" + "AccentHexBare" + "}}" in v for v in snip.values()):
+        hexa = accent_hex(repo, template, accent)
+        snip = {k: v.replace("{{" + "AccentHexBare" + "}}", hexa) for k, v in snip.items()}
     sources_line = "target_sources(%s PRIVATE ${PRODUCT_SOURCES})\n" % pid
     plugin_links = "target_link_libraries(%s\n    PRIVATE\n" % pid
     harness_links = "target_link_libraries(%sHarness PRIVATE\n" % pid
@@ -114,6 +145,13 @@ def wire_cmake(repo, template):
     add("plugin-links", links_ui(plugin_links), plugin_links, False)
     add("harness-links", links_ui(harness_links), harness_links, False)
     add("bounce", "bounce_null" in text, "        add_test(NAME preset_bank", True)
+    add("snapshot", "GuiSnapshot" in text, "# Real-time safety (rule 1): the harness with RealtimeSanitizer;", True)
+    # the harness compiles the sources itself: it needs the theme and the accent too
+    start = text.find("target_compile_definitions(%sHarness PRIVATE" % pid)
+    if "binary" in snip and start >= 0 and "PRODUCT_OBERLI_DEFINITIONS" not in text[start:text.find(")", start)]:
+        close = text.find(")", start)
+        text = text[:close] + " ${PRODUCT_OBERLI_DEFINITIONS}" + text[close:]
+        changed.append("harness definitions")
     if "tests" in snip and "OberliLoudnessTest" not in text:
         text = text.rstrip("\n") + "\n\n" + snip["tests"]
         changed.append("tests")
@@ -122,6 +160,26 @@ def wire_cmake(repo, template):
     print("CMakeLists.txt: %s" % ("added " + ", ".join(changed) if changed else "already wired"))
     for name in manual:
         print("CMakeLists.txt: no anchor for '%s'; add that block of the template's tools/init/oberli-cmake.txt by hand" % name)
+
+
+def wire_notices(repo, template):
+    """Rubik ships with Source/oberli: its notices entry, then THIRD_PARTY_NOTICES.md regenerated."""
+    notices = repo / "notices.toml"
+    entry = template / "tools" / "init" / "oberli-notices.toml"
+    if not notices.exists() or not entry.exists():
+        return
+    text = notices.read_text(encoding="utf-8")
+    if 'name = "Rubik"' in text:
+        print("notices.toml: Rubik already there")
+        return
+    block = "".join(l for l in entry.read_text(encoding="utf-8").splitlines(True) if not l.startswith("#"))
+    notices.write_text(text.rstrip("\n") + "\n" + block, encoding="utf-8")
+    tool = repo / "scripts" / "ship" / "notices.py"
+    if tool.exists():
+        r = subprocess.run([sys.executable, str(tool), "generate", str(repo)], capture_output=True, text=True)
+        print("notices.toml: added Rubik; THIRD_PARTY_NOTICES.md %s" % ("regenerated" if r.returncode == 0 else "NOT regenerated: " + r.stderr.strip()[-200:]))
+    else:
+        print("notices.toml: added Rubik; regenerate THIRD_PARTY_NOTICES.md")
 
 
 def wire_harness(repo):
@@ -150,7 +208,7 @@ def wire_harness(repo):
     print("tools/harness/Main.cpp: added --non-realtime")
 
 
-def refresh(repo, template):
+def refresh(repo, template, accent=None):
     src = template / "Source" / "oberli"
     if not (src / MANIFEST).exists():
         sys.exit("refresh_oberli: %s has no Source/oberli/%s" % (template, MANIFEST))
@@ -158,14 +216,19 @@ def refresh(repo, template):
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(src, dst)
+    pid = re.search(r"^project\((\w+)\s", (repo / "CMakeLists.txt").read_text(encoding="utf-8"), re.M)
     for rel in COMPANIONS:
         if (template / rel).exists():
             (repo / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(template / rel, repo / rel)
+            if rel.endswith(".cpp") and pid:   # the snapshot tool names the product's processor
+                text = (repo / rel).read_text(encoding="utf-8")
+                (repo / rel).write_text(text.replace("{{" + "ProductId" + "}}", pid.group(1)), encoding="utf-8")
     n = sum(1 for p in dst.rglob("*") if p.is_file())
     sha = subprocess.run(["git", "-C", str(template), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
     print("Source/oberli/: %d files from %s%s" % (n, template, " (%s)" % sha if sha else ""))
-    wire_cmake(repo, template)
+    wire_cmake(repo, template, accent)
+    wire_notices(repo, template)
     wire_harness(repo)
     print("Then: cmake --preset release && cmake --build --preset release && ctest --preset fast, and commit "
           "\"oberli: refresh from plugin-template%s\"" % (" " + sha if sha else ""))
@@ -177,6 +240,7 @@ def main(argv=None):
     ap.add_argument("--from", dest="source", help="a plugin-template clone (default: a shallow clone from GitHub)")
     ap.add_argument("--repo", default=".", help="the plugin repo (default: here)")
     ap.add_argument("--check", action="store_true", help="only compare Source/oberli/ with its MANIFEST")
+    ap.add_argument("--accent", help="the category's accent as #RRGGBB (default: CMakeLists.txt, else the registry)")
     a = ap.parse_args(argv)
     repo = Path(a.repo).resolve()
     if a.check:
@@ -184,13 +248,13 @@ def main(argv=None):
     if not (repo / "CMakeLists.txt").exists():
         sys.exit("refresh_oberli: %s is not a plugin repo (no CMakeLists.txt)" % repo)
     if a.source:
-        return refresh(repo, Path(a.source).expanduser().resolve())
+        return refresh(repo, Path(a.source).expanduser().resolve(), a.accent)
     with tempfile.TemporaryDirectory() as d:
         clone = Path(d) / "plugin-template"
         r = subprocess.run(["git", "clone", "-q", "--depth", "1", TEMPLATE_URL, str(clone)], capture_output=True, text=True)
         if r.returncode != 0:
             sys.exit("refresh_oberli: cannot clone %s:\n%s" % (TEMPLATE_URL, r.stderr))
-        return refresh(repo, clone)
+        return refresh(repo, clone, a.accent)
 
 
 if __name__ == "__main__":

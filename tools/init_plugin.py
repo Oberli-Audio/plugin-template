@@ -166,7 +166,8 @@ def main(argv=None):
     run([sys.executable, str(root / "scripts/ship/shipcheck.py"), "known-issues", ".", "--write"], root)
 
     # the init material leaves the product
-    for p in (root / "tools/init/parameters.instrument.csv", root / "tools/init/oberli-cmake.txt", root / "tools/init_plugin.py"):
+    for p in (root / "tools/init/parameters.instrument.csv", root / "tools/init/oberli-cmake.txt", root / "tools/init/oberli-notices.toml",
+              root / "tools/init_plugin.py"):
         if p.exists():
             p.unlink()
     if (root / "tools/init").exists() and not any((root / "tools/init").iterdir()):

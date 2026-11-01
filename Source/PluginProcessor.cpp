@@ -1,11 +1,27 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "State.h"
+#include "oberli/RenderSafety.h"
+
+#include <ProductData.h>
 
 #include <cmath>
 
 namespace
 {
+/** A file compiled into the plugin (CMakeLists.txt: ProductData) by its name, or an empty block. */
+juce::MemoryBlock productFile (const juce::String& fileName)
+{
+    for (int i = 0; i < ProductData::namedResourceListSize; ++i)
+        if (fileName == ProductData::getNamedResourceOriginalFilename (ProductData::namedResourceList[i]))
+        {
+            int size = 0;
+            const auto* data = ProductData::getNamedResource (ProductData::namedResourceList[i], size);
+            return { data, (size_t) size };
+        }
+    return {};
+}
+
 template <typename T>
 T* param (juce::AudioProcessorValueTreeState& apvts, const char* id)
 {
@@ -28,6 +44,23 @@ T* param (juce::AudioProcessorValueTreeState& apvts, const char* id)
     mixParam = param<std::atomic<float>> (apvts, Params::mix);
     bypassParam = param<std::atomic<float>> (apvts, Params::bypassParameterId);
 #endif
+
+    // The factory bank (presets.csv and presets/, compiled in) and the User folder, in the
+    // family's format (State.h); the Strip frame's header, drawer and menu work on it.
+    presets = std::make_unique<oberli::PresetLibrary> (
+        productFile ("presets.csv").toString(), productFile,
+        [this] (const juce::String& name, const juce::String& category, const juce::String& description, bool factory)
+        {
+            return {{bundle}}::State::presetXml (apvts, name, "", category, description, factory);
+        },
+        [this] (const juce::XmlElement& document)
+        {
+            auto* state = {{bundle}}::State::stateOf (document);
+            return state != nullptr && {{bundle}}::State::fromXml (*state, apvts);
+        });
+    // A new instance holds the parameter table's defaults: the Init preset, the bank's first.
+    if (! presets->factoryPresets().empty())
+        presets->restoreActive ("factory:" + presets->factoryPresets().front().slug);
 }
 
 void {{ProductId}}AudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -60,6 +93,7 @@ void {{ProductId}}AudioProcessor::prepareToPlay (double sampleRate, int samplesP
     }
     rmsL.store (0.0f);
     rmsR.store (0.0f);
+    peaks.reset();
 }
 
 void {{ProductId}}AudioProcessor::releaseResources() {}
@@ -241,6 +275,10 @@ void {{ProductId}}AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer
     }
     rmsL.store (lastL, std::memory_order_relaxed);
     rmsR.store (r != nullptr ? lastR : lastL, std::memory_order_relaxed);
+
+    // the display's copy only while someone can watch it; a bounce renders the same audio (RenderSafety.h)
+    if (oberli::render::modeFor (*this).feedDisplay)
+        peaks.push (buffer, 0, numSamples);
 }
 
 juce::AudioProcessorEditor* {{ProductId}}AudioProcessor::createEditor()
@@ -250,7 +288,10 @@ juce::AudioProcessorEditor* {{ProductId}}AudioProcessor::createEditor()
 
 void {{ProductId}}AudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    copyXmlToBinary (*{{bundle}}::State::toXml (apvts), destData);
+    auto xml = {{bundle}}::State::toXml (apvts);
+    if (auto* extra = xml->getChildByName ("Extra"); extra != nullptr && presets->activeId().isNotEmpty())
+        extra->setAttribute ("preset", presets->activeId());   // which preset the sound came from, for the header
+    copyXmlToBinary (*xml, destData);
 }
 
 void {{ProductId}}AudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -267,7 +308,11 @@ bool {{ProductId}}AudioProcessor::loadState (const void* data, int sizeInBytes)
     if (xml == nullptr)
         return false;
     auto* state = {{bundle}}::State::stateOf (*xml);
-    return state != nullptr && {{bundle}}::State::fromXml (*state, apvts);
+    if (state == nullptr || ! {{bundle}}::State::fromXml (*state, apvts))
+        return false;
+    const auto* extra = state->getChildByName ("Extra");
+    presets->restoreActive (extra != nullptr ? extra->getStringAttribute ("preset") : juce::String());
+    return true;
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

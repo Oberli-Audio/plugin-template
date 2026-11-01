@@ -128,6 +128,22 @@ file(GLOB OBERLI_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Source/o
 list(APPEND PRODUCT_SOURCES ${OBERLI_SOURCES})
 
 target_sources({{ProductId}} PRIVATE ${PRODUCT_SOURCES})
+# The shared code's type and marks (Rubik's five static weights as Google Fonts serves them,
+# unmodified, SIL OFL 1.1: LICENSES/OFL-1.1.txt and notices.toml; the Logo group's four SVGs), and
+# the product's own files the plugin reads at run time: LICENSE and THIRD_PARTY_NOTICES.md for
+# About (compiled in, never a URL), presets.csv and the factory bank for the preset drawer.
+file(GLOB OBERLI_ASSETS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Source/oberli/assets/fonts/*.ttf"
+                                         "${CMAKE_CURRENT_SOURCE_DIR}/Source/oberli/assets/logo/*.svg")
+juce_add_binary_data(OberliUiData HEADER_NAME OberliUiData.h NAMESPACE OberliUiData SOURCES ${OBERLI_ASSETS})
+set_target_properties(OberliUiData PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+file(GLOB PRODUCT_FACTORY_PRESETS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/presets/*.oberlipreset")
+juce_add_binary_data(ProductData HEADER_NAME ProductData.h NAMESPACE ProductData
+    SOURCES LICENSE THIRD_PARTY_NOTICES.md presets.csv ${PRODUCT_FACTORY_PRESETS})
+set_target_properties(ProductData PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+# The theme by kind (instruments Charcoal, effects Bone) and the accent of the product's category
+# (the registry; plugin-ui-bob brand sheet), read by Source/oberli/OberliLookAndFeel.h.
+set(PRODUCT_OBERLI_DEFINITIONS OBERLI_THEME_BONE=$<IF:$<BOOL:${PRODUCT_IS_SYNTH}>,0,1> OBERLI_ACCENT=0xFF{{AccentHexBare}})
+target_compile_definitions({{ProductId}} PUBLIC ${PRODUCT_OBERLI_DEFINITIONS})
 target_include_directories({{ProductId}} PRIVATE Source "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions({{ProductId}}
     PUBLIC
@@ -140,6 +156,8 @@ target_compile_definitions({{ProductId}}
         PRODUCT_IS_INSTRUMENT=$<IF:$<BOOL:${PRODUCT_IS_SYNTH}>,1,0>)
 target_link_libraries({{ProductId}}
     PRIVATE
+        OberliUiData
+        ProductData
         juce::juce_audio_utils
         juce::juce_audio_formats
         juce::juce_dsp
@@ -225,7 +243,7 @@ target_include_directories({{ProductId}}Harness PRIVATE Source "${CMAKE_CURRENT_
 target_compile_definitions({{ProductId}}Harness PRIVATE
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_DISPLAY_SPLASH_SCREEN=0 JUCE_REPORT_APP_USAGE=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1 JUCE_STANDALONE_APPLICATION=1
-    PRODUCT_IS_INSTRUMENT=$<IF:$<BOOL:${PRODUCT_IS_SYNTH}>,1,0>)
+    PRODUCT_IS_INSTRUMENT=$<IF:$<BOOL:${PRODUCT_IS_SYNTH}>,1,0> ${PRODUCT_OBERLI_DEFINITIONS})
 # The harness compiles the plugin sources itself with its own copy of the modules (simple and
 # portable; Horizon Pad links the SharedCode library instead, which saves a compile).
 target_sources({{ProductId}}Harness PRIVATE ${PRODUCT_SOURCES})
@@ -235,6 +253,7 @@ target_compile_definitions({{ProductId}}Harness PRIVATE
     JucePlugin_Name="$<TARGET_PROPERTY:{{ProductId}},JUCE_PLUGIN_NAME>"
     JucePlugin_VersionString="${PROJECT_VERSION}")
 target_link_libraries({{ProductId}}Harness PRIVATE
+    OberliUiData ProductData
     juce::juce_audio_utils juce::juce_dsp juce::juce_audio_formats
     juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 if (PRODUCT_ASAN)
@@ -250,6 +269,21 @@ if (PRODUCT_TSAN AND NOT MSVC)
     target_compile_options({{ProductId}}Harness PRIVATE -fsanitize=thread)
     target_link_options({{ProductId}}Harness PRIVATE -fsanitize=thread)
 endif()
+# {{ProductId}}GuiSnapshot: the real editor rendered offscreen to PNG at any scale and state
+# (tools/gui_snapshot/Main.cpp; plugin-ui-bob audio-plugins.md 15). Built on demand, never shipped:
+#   cmake --build build --target {{ProductId}}GuiSnapshot
+juce_add_console_app({{ProductId}}GuiSnapshot PRODUCT_NAME "{{ProductId}}GuiSnapshot")
+target_sources({{ProductId}}GuiSnapshot PRIVATE tools/gui_snapshot/Main.cpp ${PRODUCT_SOURCES})
+target_include_directories({{ProductId}}GuiSnapshot PRIVATE Source "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions({{ProductId}}GuiSnapshot PRIVATE
+    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_DISPLAY_SPLASH_SCREEN=0 JUCE_REPORT_APP_USAGE=0
+    JUCE_STRICT_REFCOUNTEDPOINTER=1 JUCE_STANDALONE_APPLICATION=1
+    PRODUCT_IS_INSTRUMENT=$<IF:$<BOOL:${PRODUCT_IS_SYNTH}>,1,0> ${PRODUCT_OBERLI_DEFINITIONS}
+    JucePlugin_Name="$<TARGET_PROPERTY:{{ProductId}},JUCE_PLUGIN_NAME>" JucePlugin_VersionString="${PROJECT_VERSION}")
+target_link_libraries({{ProductId}}GuiSnapshot PRIVATE OberliUiData ProductData
+    juce::juce_audio_utils juce::juce_dsp juce::juce_audio_formats
+    juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
 # Real-time safety (rule 1): the harness with RealtimeSanitizer; needs LLVM 20+ (the rtsan
 # preset takes the compiler from $LLVM_ROOT, set by `toolchain.py env`). processBlock runs as a
 # real-time context and any allocation, lock or system call aborts with a stack trace.

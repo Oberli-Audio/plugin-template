@@ -8,6 +8,8 @@
 #include <cstring>
 
 #include "Params.h"
+#include "oberli/MeterTaps.h"
+#include "oberli/PresetLibrary.h"
 
 /*  {{Product}} - the processor.
 
@@ -58,6 +60,14 @@ public:
     /** The parameter tree; the editor attaches to it, the harness sets values through it. */
     juce::AudioProcessorValueTreeState& parameters() { return apvts; }
 
+    /** The presets (the factory bank compiled in, the User folder, the active one): the Strip
+        frame's header, drawer and menu work on it. Message thread. */
+    oberli::PresetLibrary& presetLibrary() noexcept { return *presets; }
+    oberli::PresetHost& presetHost() noexcept { return *presets; }
+
+    /** The output's sample peak and clip flag for the editor's meter (Source/oberli/MeterTaps.h). */
+    oberli::PeakTap& outputPeaks() noexcept { return peaks; }
+
     /** What the editor may read from the audio thread: the 20 ms RMS per channel (D.6.2). */
     float outputLevel (int channel) const noexcept { return channel == 0 ? rmsL.load (std::memory_order_relaxed) : rmsR.load (std::memory_order_relaxed); }
 
@@ -92,6 +102,8 @@ private:
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gainSmoothed;
     double currentSampleRate = 48000.0;
     std::atomic<float> rmsL { 0.0f }, rmsR { 0.0f };
+    oberli::PeakTap peaks;
+    std::unique_ptr<oberli::PresetLibrary> presets;
     juce::dsp::BallisticsFilter<float> rmsFilterL, rmsFilterR;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR ({{ProductId}}AudioProcessor)
