@@ -130,6 +130,8 @@ jobs:
           cd dist
           for f in *.zip; do [ -f "$f" ] && sha256sum "$f"; done > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      - name: One extras zip for everything a friend does not need
+        run: python3 scripts/ship/shipcheck.py pack-extras dist --repo .
       - name: Assets are what the README promises
         run: python3 scripts/ship/shipcheck.py release-assets dist --repo .
       - name: Release notes from the changelog
@@ -138,8 +140,4 @@ jobs:
         with:
           draft: true
           body_path: dist/RELEASE_NOTES.md
-          files: |
-            dist/*.zip
-            dist/enable-crashdumps.reg
-            dist/SHA256SUMS.txt
-            dist/build-info-*.json
+          files: dist/*.zip               # the macOS zip, the Windows zip and the extras zip

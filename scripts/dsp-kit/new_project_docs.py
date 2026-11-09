@@ -19,7 +19,7 @@ from pathlib import Path
 DOCS = Path(__file__).resolve().parents[2] / "references"   # the skill's playbook files
 # output file -> (playbook file, heading whose first fenced block is the template)
 TEMPLATES = {
-    "brief.md": ("dsp-foundations.md", "### F.15.2"),
+    "brief.md": ("dsp-foundations-workflow.md", "### F.15.2"),
     "status.md": ("dsp-development.md", "### D.9.2"),
     "failures.md": ("dsp-development.md", "### D.9.3"),
 }

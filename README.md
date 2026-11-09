@@ -25,15 +25,19 @@ in) to `C:\Program Files\Common Files\VST3\`; Windows asks once for permission. 
 Live, Preferences > Plug-Ins > Rescan (Ableton Live 10: Preferences > File/Folder, "Use VST3
 Plug-In System Folder" on, Rescan). If the window looks blurry, turn off Ableton Live's
 "Auto-Scale Plug-in Window".
-**macOS:** Finder > Go > Go to Folder, paste `~/Library/Audio/Plug-Ins/VST3/`, drop
-`{{Product}}.vst3` there (the `.component` goes to `~/Library/Audio/Plug-Ins/Components/`).
+**macOS:** Finder > Go > Go to Folder, paste `/Library/Audio/Plug-Ins/VST3/` (the folder for
+all users; Finder may ask for your password), drop `{{Product}}.vst3` there (the `.component` goes
+to `/Library/Audio/Plug-Ins/Components/`). If an older copy sits in
+`~/Library/Audio/Plug-Ins/VST3/`, delete it: two copies leave the host to pick one.
 Start Ableton Live and let it scan; it says the plugin cannot be verified, which is expected.
 **Right after that:** System Settings > Privacy & Security, scroll down, **Open Anyway** next
 to {{Product}} (the button disappears after a while; if it is gone, scan again). Then, in
 Ableton Live, Preferences > Plug-Ins > Rescan. Once per download; needs an administrator
 account. If the message says "damaged" instead of "cannot be verified", or the button never
-appears: Terminal, `xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"{{Product}}.vst3"`,
-then rescan.
+appears: Terminal, `sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/VST3/"{{Product}}.vst3"`
+(asks for your password), then rescan (Ableton Live: hold Option and click Rescan, so it
+retries a plugin that failed before). Never click "Move to Trash" in the macOS dialog: it
+deletes the plugin.
 
 ## Update
 Same as install, over the old folder (quit Ableton Live first). Your presets and settings
@@ -42,8 +46,8 @@ saved with the newer version opens in the older one unless the release notes say
 
 ## Uninstall
 Delete `{{Product}}.vst3` from `C:\Program Files\Common Files\VST3\` or
-`~/Library/Audio/Plug-Ins/VST3/` (and `{{Product}}.component` from
-`~/Library/Audio/Plug-Ins/Components/`). Settings: `%APPDATA%\Oberli Audio\{{Product}}\` or
+`/Library/Audio/Plug-Ins/VST3/` (and `{{Product}}.component` from
+`/Library/Audio/Plug-Ins/Components/`). Settings: `%APPDATA%\Oberli Audio\{{Product}}\` or
 `~/Library/Application Support/Oberli Audio/{{Product}}/`. Presets: `Documents\VST3
 Presets\Oberli Audio\{{Product}}\` or `~/Library/Audio/Presets/Oberli Audio/{{Product}}/`, only if you
 also want your own presets gone.
@@ -64,7 +68,7 @@ copies (one click). If you can, the `.als` after Collect All and Save and a ten-
 bounce. I look at reports against the latest release.
 Crash: macOS shows a "Report a Crash" pane on the next start, send me that report (or the
 newest `Live-*.ips` in `~/Library/Logs/DiagnosticReports/`); Windows: run
-`enable-crashdumps.reg` from the release page once, then send the newest file in
+`enable-crashdumps.reg` from the release page's extras zip once, then send the newest file in
 `%LOCALAPPDATA%\CrashDumps`, or the Event Viewer entry (Windows Logs > Application, source
 "Application Error").
 

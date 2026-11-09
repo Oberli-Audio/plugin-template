@@ -84,7 +84,7 @@ def asset_names(c):
     return {"mac_zip": "%s-macOS.zip" % n, "win_zip": "%s-Windows-x64.zip" % n,
             "sym_mac": "%s-symbols-macOS.zip" % n, "sym_win": "%s-symbols-Windows.zip" % n,
             "info_mac": "build-info-macOS.json", "info_win": "build-info-Windows.json",
-            "reg": "enable-crashdumps.reg", "sums": "SHA256SUMS.txt"}
+            "reg": "enable-crashdumps.reg", "sums": "SHA256SUMS.txt", "extras": "%s-extras.zip" % n}
 
 
 def bundles_of(c, platform="macos"):
@@ -148,8 +148,9 @@ def ci(c):
     c.sh("python scripts/ship/buildinfo.py check %s --expect-version %s --platform windows" % (a["info_win"], c.version), where="github")
     c.say("   checksums and draft (ubuntu release job, after download-artifact merge-multiple)")
     c.sh("for f in *.zip; do [ -f \"$f\" ] && sha256sum \"$f\"; done > %s" % a["sums"], where="github")
+    c.sh([sys.executable, "scripts/ship/shipcheck.py", "pack-extras", "dist", "--repo", "."], where="github")
     c.sh([sys.executable, "scripts/ship/shipcheck.py", "release-assets", "dist", "--repo", "."], where="github")
-    c.sh("softprops/action-gh-release: draft, body = shipcheck.py changelog-section, files = %s" % ", ".join(a.values()), where="github")
+    c.sh("softprops/action-gh-release: draft, body = shipcheck.py changelog-section, files = %s, %s, %s (the extras zip holds %s)" % (a["mac_zip"], a["win_zip"], a["extras"], ", ".join(a[k] for k in ("sums", "info_mac", "info_win", "sym_mac", "sym_win", "reg"))), where="github")
 
 
 def smoke(c):

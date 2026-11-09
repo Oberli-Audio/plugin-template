@@ -3,7 +3,8 @@
 
     shipcheck.py docs <repo>              # all checks; exit 1 on any failure
     shipcheck.py secrets <repo>           # before going public: history and workflows scanned for secrets
-    shipcheck.py release-assets <dir> [--repo .]   # the downloaded assets: names, zip layout, checksums, build-info (symbols: warnings)
+    shipcheck.py release-assets <dir> [--repo .]   # the release's three assets: names, zip layout, checksums, build-info (symbols: warnings)
+    shipcheck.py pack-extras <dir> [--repo .]      # move checksums, build-info, symbols and the .reg into <Name>-extras.zip
     shipcheck.py message <repo>           # the pasteable message to the friends
     shipcheck.py changelog-section <repo> # print the CHANGELOG section for VERSION (release body)
     shipcheck.py known-issues <repo> [--write]   # README's Known issues from docs/status.md, Open exceptions (lines with a Friends: sentence)
@@ -356,26 +357,93 @@ def run_secrets(repo):
     return 0
 
 
+EXTRAS_REG = "enable-crashdumps.reg"
+
+
 def expected_assets(repo, cfg):
-    """The version-free set (github-releases.md): required assets, and the symbols zips, which only warn."""
+    """The version-free set (github-releases.md). public: the three files on the release page.
+    want/wish: the full set once the extras zip is unpacked beside the two product zips; the
+    symbols zips only warn."""
     name = cfg.get("product", {}).get("asset_name") or cfg.get("product", {}).get("name", "Plugin").replace(" ", "")
-    want = ["%s-macOS.zip" % name, "%s-Windows-x64.zip" % name, "SHA256SUMS.txt", "build-info-macOS.json", "build-info-Windows.json"]
+    public = ["%s-macOS.zip" % name, "%s-Windows-x64.zip" % name, "%s-extras.zip" % name]
+    want = public[:2] + ["SHA256SUMS.txt", "build-info-macOS.json", "build-info-Windows.json"]
     wish = ["%s-symbols-macOS.zip" % name, "%s-symbols-Windows.zip" % name]
-    return name, want, wish
+    return name, want, wish, public
+
+
+def _is_extra(fname, name):
+    return (fname == "SHA256SUMS.txt" or fname == EXTRAS_REG or (fname.startswith("build-info-") and fname.endswith(".json"))
+            or (fname.startswith("%s-symbols-" % name) and fname.endswith(".zip")))
+
+
+def run_pack_extras(assets_dir, repo):
+    """Everything a friend does not need goes into one <Name>-extras.zip, flat; the release page then
+    shows the two product zips, the extras zip and GitHub's own Source code links."""
+    import zipfile
+    name, _, _, public = expected_assets(repo, read_toml(repo))
+    d = Path(assets_dir).expanduser()
+    items = sorted(p for p in d.iterdir() if p.is_file() and _is_extra(p.name, name))
+    if not items:
+        print("ERROR: nothing to pack in %s" % d)
+        return 1
+    out = d / public[2]
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in items:
+            zf.write(p, p.name)
+    for p in items:
+        p.unlink()
+    print("packed %s: %s" % (out.name, ", ".join(p.name for p in items)))
+    return 0
 
 
 def run_release_assets(assets_dir, repo):
-    """The downloaded (or about-to-be-uploaded) assets: names, zip layout, checksums, provenance."""
-    import hashlib
-    import json
+    """The release's assets as uploaded or downloaded: the two product zips and the extras zip.
+    The extras zip is unpacked into a scratch folder beside copies of the product zips, and the
+    full set is checked there."""
+    import shutil
+    import tempfile
     import zipfile
-    cfg = read_toml(repo)
-    name, want, wish = expected_assets(repo, cfg)
+    name, want, wish, public = expected_assets(repo, read_toml(repo))
     d = Path(assets_dir).expanduser()
-    errs, warns = [], []
     if not d.exists():
         print("ERROR: %s does not exist" % d)
         return 1
+    errs = []
+    have = {p.name for p in d.iterdir() if p.is_file()}
+    for w in public:
+        if w not in have:
+            errs.append("missing asset %s%s" % (w, " (shipcheck.py pack-extras packs it)" if w == public[2] else ""))
+    for h in sorted(have):
+        if h in public or h.startswith("RELEASE_NOTES"):
+            continue
+        if _is_extra(h, name):
+            errs.append("%s sits beside the zips; it belongs inside %s (shipcheck.py pack-extras)" % (h, public[2]))
+        elif h.endswith((".zip", ".pkg", ".exe", ".json", ".txt", ".reg")):
+            errs.append("unexpected asset %s (the release shows %s)" % (h, ", ".join(public)))
+    with tempfile.TemporaryDirectory() as tmp:
+        t = Path(tmp)
+        for w in public[:2]:
+            if (d / w).exists():
+                shutil.copy2(d / w, t / w)
+        ex = d / public[2]
+        if ex.exists():
+            try:
+                with zipfile.ZipFile(ex) as zf:
+                    for n in zf.namelist():
+                        if "/" in n or not _is_extra(n, name):
+                            errs.append("%s: entry %s; the extras zip is flat and holds only checksums, build-info, symbols zips and %s" % (ex.name, n, EXTRAS_REG))
+                            continue
+                        (t / n).write_bytes(zf.read(n))
+            except zipfile.BadZipFile:
+                errs.append("%s: not a zip" % ex.name)
+        return _check_asset_set(t, repo, name, want, wish, errs)
+
+
+def _check_asset_set(d, repo, name, want, wish, errs):
+    import hashlib
+    import json
+    import zipfile
+    warns = []
     have = {p.name for p in d.iterdir() if p.is_file()}
     for w in want:
         if w not in have:
@@ -385,7 +453,7 @@ def run_release_assets(assets_dir, repo):
             warns.append("no %s: a crash from this tag could not be symbolicated (feedback-loop.md 5)" % w)
     extra = sorted(h for h in have if h.endswith((".zip", ".pkg", ".exe", ".json", ".txt")) and h not in want + wish and not h.startswith("RELEASE_NOTES"))
     for e in extra:
-        errs.append("unexpected asset %s (version-free names: %s)" % (e, ", ".join(want + wish)))
+        errs.append("unexpected file %s in the extras zip (version-free names: %s)" % (e, ", ".join(want + wish)))
     bundle_exts = {".vst3", ".component", ".clap"}
     for z in sorted(d.glob("*.zip")):
         try:
@@ -452,7 +520,7 @@ def run_release_assets(assets_dir, repo):
     if errs:
         print("shipcheck release-assets: %d error(s), %d warning(s)" % (len(errs), len(warns)))
         return 1
-    print("shipcheck release-assets OK: %s%s" % (", ".join(want), "; %d warning(s)" % len(warns) if warns else "; symbols present"))
+    print("shipcheck release-assets OK: %s and %s-extras.zip (%s)%s" % (", ".join(want[:2]), name, ", ".join(want[2:]), "; %d warning(s)" % len(warns) if warns else "; symbols present"))
     return 0
 
 
@@ -480,14 +548,14 @@ def message_text(repo):
     if sounds:
         lines.append(re.sub(r"\*\*", "", sounds[0]))
     lines += ["",
-              "Update: Quit Ableton Live. Download the zip for your system (not \"Source code\"). Windows: copy the whole %s.vst3 folder to C:\\Program Files\\Common Files\\VST3\\ (replace). macOS: Finder > Go > Go to Folder > ~/Library/Audio/Plug-Ins/VST3/, replace, start Ableton Live, then right away System Settings > Privacy & Security > Open Anyway, rescan. Details in the README." % name,
+              "Update: Quit Ableton Live. Download the zip for your system (not \"Source code\"). Windows: copy the whole %s.vst3 folder to C:\\Program Files\\Common Files\\VST3\\ (replace). macOS: Finder > Go > Go to Folder > /Library/Audio/Plug-Ins/VST3/, replace (Finder may ask for your password), start Ableton Live, then right away System Settings > Privacy & Security > Open Anyway, rescan; never click Move to Trash. Details in the README." % name,
               "Your presets and settings stay."]
     if state_bump:
         lines.append("Projects saved with this version will not open in older versions; if you need to go back, keep the project and send me the .als.")
     else:
         lines.append("If it misbehaves: take the previous release from the same page (a project saved with this version still opens there), and tell me what happened.")
     subj = "%s %s: three words" % (name, version)
-    lines += ["", "If something is off: tell me what you were doing right before, what you expected to hear, and paste what the About panel copies (one click). If you can, the .als after Collect All and Save and a ten-second bounce. Mail subject \"%s\" or just write me. Crash: macOS sends you the report pane (or ~/Library/Logs/DiagnosticReports/), Windows: %%LOCALAPPDATA%%\\CrashDumps after the enable-crashdumps.reg from the release page, or the Event Viewer entry." % subj]
+    lines += ["", "If something is off: tell me what you were doing right before, what you expected to hear, and paste what the About panel copies (one click). If you can, the .als after Collect All and Save and a ten-second bounce. Mail subject \"%s\" or just write me. Crash: macOS sends you the report pane (or ~/Library/Logs/DiagnosticReports/), Windows: %%LOCALAPPDATA%%\\CrashDumps after the enable-crashdumps.reg from the extras zip on the release page, or the Event Viewer entry." % subj]
     return "\n".join(lines)
 
 
@@ -615,6 +683,19 @@ def selftest():
                 dg = hashlib.sha256(f.read_bytes()).hexdigest()
                 lines.append("%s  %s" % (dg, f.name if good else "macos/" + f.name))
             (d / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n")
+            (d / EXTRAS_REG).write_text("x")
+            run_pack_extras(d, repo)
+        def repack(d, drop):
+            with zipfile.ZipFile(d / "FakePad-extras.zip") as zf:
+                items = {n: zf.read(n) for n in zf.namelist()}
+            for n in list(items):
+                if drop in n:
+                    del items[n]
+            if "SHA256SUMS.txt" in items:
+                items["SHA256SUMS.txt"] = "".join(l + "\n" for l in items["SHA256SUMS.txt"].decode().splitlines() if drop not in l).encode()
+            with zipfile.ZipFile(d / "FakePad-extras.zip", "w") as zf:
+                for n, b in items.items():
+                    zf.writestr(n, b)
         with tempfile.TemporaryDirectory() as d4:
             make_assets(Path(d4) / "ok", True)
             expect("release-assets passes", run_release_assets(Path(d4) / "ok", repo) == 0)
@@ -627,8 +708,14 @@ def selftest():
             expect("release-assets catches detritus, prefix, version and the notices", rc == 1 and "detritus" in out and "folder prefix" in out and "VERSION is" in out and "must ride inside" in out)
             expect("symbols only warn", "WARN: FakePad-symbols-macOS.zip: no .dSYM" in out and "WARN: no FakePad-symbols-Windows.zip" in out and "no .dSYM" not in "".join(l for l in out.splitlines() if l.startswith("ERROR")))
             ok = Path(d4) / "ok"
-            (ok / "FakePad-symbols-Windows.zip").unlink()
-            (ok / "SHA256SUMS.txt").write_text("".join(l + "\n" for l in (ok / "SHA256SUMS.txt").read_text().splitlines() if "symbols-Windows" not in l))
+            expect("pack-extras leaves three assets", sorted(p.name for p in ok.iterdir()) == ["FakePad-Windows-x64.zip", "FakePad-extras.zip", "FakePad-macOS.zip"])
+            (ok / "build-info-macOS.json").write_text("{}")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = run_release_assets(ok, repo)
+            expect("a loose extra beside the zips fails", rc == 1 and "belongs inside FakePad-extras.zip" in buf.getvalue())
+            (ok / "build-info-macOS.json").unlink()
+            repack(ok, "symbols-Windows")
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 rc = run_release_assets(ok, repo)
@@ -641,7 +728,7 @@ def selftest():
     if fails:
         print("shipcheck selftest FAILED:\n  " + "\n  ".join(fails), file=sys.stderr)
         return 1
-    print("shipcheck selftest OK: fixture passes (against the fixture registry); README sections (incl. the Feedback fields and both crash paths), licence file (and its reserved clause), changelog, Sounds different, a stale notices file, a dependency missing from notices.toml, presets, removed parameter, VERSION, stale Known issues, a plugin code off the registry and an unregistered slug each fail on a planted defect; known-issues --write restores the section; a token deleted from the tree is still found in the history; release-assets passes a clean set and catches detritus, prefixed checksums, a stale build-info and a zip without the notices, and warns (only) on a missing or empty symbols zip; the message has every part")
+    print("shipcheck selftest OK: fixture passes (against the fixture registry); README sections (incl. the Feedback fields and both crash paths), licence file (and its reserved clause), changelog, Sounds different, a stale notices file, a dependency missing from notices.toml, presets, removed parameter, VERSION, stale Known issues, a plugin code off the registry and an unregistered slug each fail on a planted defect; known-issues --write restores the section; a token deleted from the tree is still found in the history; pack-extras leaves the two product zips and the extras zip; release-assets passes a clean set and catches a loose extra beside the zips, detritus, prefixed checksums, a stale build-info and a zip without the notices, and warns (only) on a missing or empty symbols zip; the message has every part")
     return 0
 
 
@@ -664,6 +751,11 @@ def main(argv=None):
     if cmd == "message":
         print(message_text(repo))
         return 0
+    if cmd == "pack-extras":
+        rp = "."
+        if "--repo" in argv:
+            rp = argv[argv.index("--repo") + 1]
+        return run_pack_extras(repo, rp)
     if cmd == "release-assets":
         rp = "."
         if "--repo" in argv:
